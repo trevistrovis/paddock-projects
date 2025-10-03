@@ -27,22 +27,51 @@
       
       <!-- Flow Rate Information -->
       <div class="card mb-3">
-        <div class="card-header">
+        <div class="card-header d-flex justify-content-between align-items-center">
           <h5 class="mb-0">Flow Rate Information (Optional)</h5>
+          <button type="button" class="btn btn-sm btn-success" id="addFilterBtn">Add Filter</button>
         </div>
         <div class="card-body">
-          <div class="mb-3">
-            <label class="form-label">Primary Flow Rate (GPM)</label>
-            <input type="number" step="0.1" class="form-control" name="primary_flow_rate">
+          <div id="filtersContainer">
+            <!-- Filter 1 -->
+            <div class="filter-group mb-4" data-filter-index="1">
+              <h6 class="border-bottom pb-2 mb-3">Filter 1</h6>
+              <div class="mb-3">
+                <label class="form-label">Filter Name/Location</label>
+                <input type="text" class="form-control" name="filter_name_1" placeholder="e.g., Main Pool, Spa, etc.">
+              </div>
+              <div class="mb-3">
+                <label class="form-label">Primary Flow Rate (GPM)</label>
+                <input type="number" step="0.1" class="form-control" name="primary_flow_rate_1">
+              </div>
+              <div class="mb-3">
+                <label class="form-label">Backwash Rate (GPM)</label>
+                <input type="number" step="0.1" class="form-control" name="backwash_rate_1">
+              </div>
+              <div class="mb-3">
+                <label class="form-label">Total Dynamic Head (ft)</label>
+                <input type="number" step="0.1" class="form-control" name="total_dynamic_head_1">
+              </div>
+            </div>
           </div>
-          <div class="mb-3">
-            <label class="form-label">Backwash Rate (GPM)</label>
-            <input type="number" step="0.1" class="form-control" name="backwash_rate">
+        </div>
+      </div>
+      
+      <!-- Hidden field to track number of filters -->
+      <input type="hidden" name="filter_count" id="filterCount" value="1">
+      
+      <!-- Template-Filter Mapping Section -->
+      <div class="card mb-3">
+        <div class="card-header bg-info text-white">
+          <h5 class="mb-0">Template-Filter Mapping</h5>
+        </div>
+        <div class="card-body">
+          <p class="text-muted">Select templates from the cache and map each to a filter. Only selected templates are used.</p>
+          <div id="templateBrowser" class="row g-3 mb-3">
+            <div class="col-12"><div class="alert alert-info">Loading templates...</div></div>
           </div>
-          <div class="mb-3">
-            <label class="form-label">Total Dynamic Head (ft)</label>
-            <input type="number" step="0.1" class="form-control" name="total_dynamic_head">
-          </div>
+          <!-- Hidden inputs for mappings get injected here -->
+          <div id="main-template-mappings"></div>
         </div>
       </div>
       
@@ -62,6 +91,8 @@
       <button type="submit" class="btn btn-primary">Generate Manual</button>
     </form>
 
+    
+
     <!-- Separate form for regenerating cover page only -->
     <div class="card mt-4">
       <div class="card-header">
@@ -73,38 +104,326 @@
             <label class="form-label">Customer Name</label>
             <input type="text" class="form-control" name="customer" required>
           </div>
-          <div class="mb-3">
-            <label class="form-label">Job Name, City, State, Zip</label>
-            <input type="text" class="form-control" name="job_name" required>
+          <div class="form-group">
+            <label for="job_name">Job Name, City, State, Zip:</label>
+            <input type="text" class="form-control" id="job_name" name="job_name" required>
           </div>
-          <div class="mb-3">
-            <label class="form-label">Phone Number</label>
-            <input type="text" class="form-control" name="phone" required>
+          <div class="form-group">
+            <label for="phone">Phone Number:</label>
+            <input type="text" class="form-control" id="phone" name="phone">
+          </div>
+          <div class="form-group">
+            <div class="card">
+              <div class="card-header bg-info text-white">
+                <h5>Template-Filter Mapping</h5>
+              </div>
+              <div class="card-body">
+                <p class="text-muted">For each template with flow fields, select which filter's data to use:</p>
+                <div id="template-filter-mappings">
+                  <!-- Template-filter mappings will be added here dynamically -->
+                  <div class="alert alert-info">Template mappings will appear after you add filters and upload templates.</div>
+                </div>
+              </div>
+            </div>
           </div>
           <!-- Flow Rate Information -->
           <div class="card mb-3">
-            <div class="card-header">
+            <div class="card-header d-flex justify-content-between align-items-center">
               <h5 class="mb-0">Flow Rate Information (Optional)</h5>
+              <button type="button" class="btn btn-sm btn-success" id="addCoverFilterBtn">Add Filter</button>
             </div>
             <div class="card-body">
-              <div class="mb-3">
-                <label class="form-label">Primary Flow Rate (GPM)</label>
-                <input type="number" step="0.1" class="form-control" name="primary_flow_rate">
-              </div>
-              <div class="mb-3">
-                <label class="form-label">Backwash Rate (GPM)</label>
-                <input type="number" step="0.1" class="form-control" name="backwash_rate">
-              </div>
-              <div class="mb-3">
-                <label class="form-label">Total Dynamic Head (ft)</label>
-                <input type="number" step="0.1" class="form-control" name="total_dynamic_head">
+              <div id="coverFiltersContainer">
+                <!-- Filter 1 -->
+                <div class="filter-group mb-4" data-filter-index="1">
+                  <h6 class="border-bottom pb-2 mb-3">Filter 1</h6>
+                  <div class="mb-3">
+                    <label class="form-label">Filter Name/Location</label>
+                    <input type="text" class="form-control" name="filter_name_1" placeholder="e.g., Main Pool, Spa, etc.">
+                  </div>
+                  <div class="mb-3">
+                    <label class="form-label">Primary Flow Rate (GPM)</label>
+                    <input type="number" step="0.1" class="form-control" name="primary_flow_rate_1">
+                  </div>
+                  <div class="mb-3">
+                    <label class="form-label">Backwash Rate (GPM)</label>
+                    <input type="number" step="0.1" class="form-control" name="backwash_rate_1">
+                  </div>
+                  <div class="mb-3">
+                    <label class="form-label">Total Dynamic Head (ft)</label>
+                    <input type="number" step="0.1" class="form-control" name="total_dynamic_head_1">
+                  </div>
+                </div>
               </div>
             </div>
           </div>
+          
+          <!-- Hidden field to track number of filters -->
+          <input type="hidden" name="filter_count" id="coverFilterCount" value="1">
           <button type="submit" class="btn btn-secondary">Regenerate Cover Page</button>
         </form>
       </div>
     </div>
   </div>
+  <!-- Add JavaScript for dynamic filter fields -->
+  <script>
+    document.addEventListener('DOMContentLoaded', function() {
+      // Main form filter handling
+      const addFilterBtn = document.getElementById('addFilterBtn');
+      const filtersContainer = document.getElementById('filtersContainer');
+      const filterCountInput = document.getElementById('filterCount');
+      
+      addFilterBtn.addEventListener('click', function() {
+        const currentCount = parseInt(filterCountInput.value);
+        const newCount = currentCount + 1;
+        
+        // Create new filter group
+        const newFilterGroup = document.createElement('div');
+        newFilterGroup.className = 'filter-group mb-4';
+        newFilterGroup.dataset.filterIndex = newCount;
+        
+        // Add filter content
+        newFilterGroup.innerHTML = `
+          <div class="d-flex justify-content-between align-items-center border-bottom pb-2 mb-3">
+            <h6 class="mb-0">Filter ${newCount}</h6>
+            <button type="button" class="btn btn-sm btn-danger remove-filter-btn">Remove</button>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Filter Name/Location</label>
+            <input type="text" class="form-control" name="filter_name_${newCount}" placeholder="e.g., Main Pool, Spa, etc.">
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Primary Flow Rate (GPM)</label>
+            <input type="number" step="0.1" class="form-control" name="primary_flow_rate_${newCount}">
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Backwash Rate (GPM)</label>
+            <input type="number" step="0.1" class="form-control" name="backwash_rate_${newCount}">
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Total Dynamic Head (ft)</label>
+            <input type="number" step="0.1" class="form-control" name="total_dynamic_head_${newCount}">
+          </div>
+        `;
+        
+        filtersContainer.appendChild(newFilterGroup);
+        
+        // Update count
+        filterCountInput.value = newCount;
+        
+        // Add event listener to the new remove button
+        newFilterGroup.querySelector('.remove-filter-btn').addEventListener('click', function() {
+          filtersContainer.removeChild(newFilterGroup);
+          updateFilterIndices('filtersContainer', 'filterCount');
+        });
+      });
+      
+      // Cover page form filter handling
+      const addCoverFilterBtn = document.getElementById('addCoverFilterBtn');
+      const coverFiltersContainer = document.getElementById('coverFiltersContainer');
+      const coverFilterCountInput = document.getElementById('coverFilterCount');
+      
+      if (addCoverFilterBtn) {
+        addCoverFilterBtn.addEventListener('click', function() {
+          const currentCount = parseInt(coverFilterCountInput.value);
+          const newCount = currentCount + 1;
+          
+          // Create new filter group
+          const newFilterGroup = document.createElement('div');
+          newFilterGroup.className = 'filter-group mb-4';
+          newFilterGroup.dataset.filterIndex = newCount;
+          
+          // Add filter content
+          newFilterGroup.innerHTML = `
+            <div class="d-flex justify-content-between align-items-center border-bottom pb-2 mb-3">
+              <h6 class="mb-0">Filter ${newCount}</h6>
+              <button type="button" class="btn btn-sm btn-danger remove-filter-btn">Remove</button>
+            </div>
+            <div class="mb-3">
+              <label class="form-label">Filter Name/Location</label>
+              <input type="text" class="form-control" name="filter_name_${newCount}" placeholder="e.g., Main Pool, Spa, etc.">
+            </div>
+            <div class="mb-3">
+              <label class="form-label">Primary Flow Rate (GPM)</label>
+              <input type="number" step="0.1" class="form-control" name="primary_flow_rate_${newCount}">
+            </div>
+            <div class="mb-3">
+              <label class="form-label">Backwash Rate (GPM)</label>
+              <input type="number" step="0.1" class="form-control" name="backwash_rate_${newCount}">
+            </div>
+            <div class="mb-3">
+              <label class="form-label">Total Dynamic Head (ft)</label>
+              <input type="number" step="0.1" class="form-control" name="total_dynamic_head_${newCount}">
+            </div>
+          `;
+          
+          coverFiltersContainer.appendChild(newFilterGroup);
+          
+          // Update count
+          coverFilterCountInput.value = newCount;
+        });
+      }
+      
+      // Function to update filter indices
+      function updateFilterIndices(containerId, countInputId) {
+        const container = document.getElementById(containerId);
+        const filterGroups = container.querySelectorAll('.filter-group');
+        const countInput = document.getElementById(countInputId);
+        
+        // Update count
+        countInput.value = filterGroups.length;
+        
+        // Update indices
+        filterGroups.forEach((group, index) => {
+          const newIndex = index + 1;
+          group.dataset.filterIndex = newIndex;
+          
+          // Update heading
+          const heading = group.querySelector('h6');
+          if (heading) {
+            heading.textContent = `Filter ${newIndex}`;
+          }
+          
+          // Update input names
+          const inputs = group.querySelectorAll('input[name]');
+          inputs.forEach(input => {
+            const baseName = input.name.split('_').slice(0, -1).join('_');
+            input.name = `${baseName}_${newIndex}`;
+          });
+        });
+      }
+    });
+  </script>
+  
+  <!-- Template-Filter Mapping Script -->
+  <script>
+    document.addEventListener('DOMContentLoaded', function() {
+      // Build hidden mapping inputs from selected cards (clean implementation)
+      function updateTemplateMappings() {
+        const mappingsContainer = document.getElementById('main-template-mappings');
+        if (!mappingsContainer) return;
+        const cards = document.querySelectorAll('#templateBrowser .card');
+        let index = 0;
+        let html = '';
+        cards.forEach(card => {
+          const cb = card.querySelector('.tpl-select');
+          const sel = card.querySelector('.tpl-filter');
+          const name = cb ? cb.getAttribute('data-name') : null;
+          if (cb && cb.checked && sel && sel.value && name) {
+            html += `<input type="hidden" name="template_name_${index}" value="${name}">`;
+            html += `<input type="hidden" name="template_filter_map_${index}" value="${sel.value}">`;
+            index++;
+          }
+        });
+        if (index > 0) {
+          html += `<input type="hidden" name="template_count" value="${index}">`;
+          mappingsContainer.innerHTML = html;
+        } else {
+          mappingsContainer.innerHTML = '<div class="alert alert-info">Select templates from above to map them to filters.</div>';
+        }
+      }
+      
+      // Visual Template Browser (fetch from /api/templates)
+      const templateBrowser = document.getElementById('templateBrowser');
+      async function fetchTemplates() {
+        try {
+          templateBrowser.innerHTML = '<div class="col-12"><div class="alert alert-info">Loading templates...</div></div>';
+          const res = await fetch('/api/templates');
+          const data = await res.json();
+          const list = (data && data.templates) ? data.templates : [];
+          if (!list.length) {
+            templateBrowser.innerHTML = '<div class="col-12"><div class="alert alert-warning">No templates found in template_cache.</div></div>';
+            return;
+          }
+          let html = '';
+          list.forEach((t, idx) => {
+            const cardId = `tpl_${idx}`;
+            html += `
+              <div class="col-12 col-sm-6 col-md-4 col-lg-3">
+                <div class="card h-100">
+                  <img src="${t.thumbnail}" class="card-img-top" alt="thumbnail for ${t.name}" onerror="this.style.display='none'">
+                  <div class="card-body d-flex flex-column">
+                    <h6 class="card-title" title="${t.name}">${t.name}</h6>
+                    <div class="form-check mb-2">
+                      <input class="form-check-input tpl-select" type="checkbox" id="${cardId}" data-name="${t.name}">
+                      <label class="form-check-label" for="${cardId}">Use this template</label>
+                    </div>
+                    <select class="form-select form-select-sm tpl-filter" disabled>
+                      <option value="">-- Select Filter --</option>
+                    </select>
+                  </div>
+                </div>
+              </div>`;
+          });
+          templateBrowser.innerHTML = html;
+          refreshFilterOptionsOnCards();
+          wireCardEvents();
+        } catch (e) {
+          templateBrowser.innerHTML = `<div class="col-12"><div class="alert alert-danger">Error loading templates: ${e}</div></div>`;
+        }
+      }
+      fetchTemplates();
+      
+      function getCurrentFilters() {
+        return Array.from(document.querySelectorAll('#filtersContainer .filter-group')).map(group => {
+          const id = group.dataset.filterIndex;
+          const nameInput = group.querySelector('input[name^="filter_name_"]');
+          const name = (nameInput && nameInput.value) ? nameInput.value : `Filter ${id}`;
+          return { id, name };
+        });
+      }
+      
+      function refreshFilterOptionsOnCards() {
+        const filters = getCurrentFilters();
+        const selects = document.querySelectorAll('.tpl-filter');
+        selects.forEach(sel => {
+          const current = sel.value;
+          sel.innerHTML = '<option value="">-- Select Filter --</option>' +
+            filters.map(f => `<option value="${f.id}">${f.name}</option>`).join('');
+          if ([...sel.options].some(o => o.value === current)) sel.value = current;
+        });
+      }
+      
+      function wireCardEvents() {
+        templateBrowser.addEventListener('change', function(e) {
+          const card = e.target.closest('.card');
+          if (!card) return;
+          const checkbox = card.querySelector('.tpl-select');
+          const select = card.querySelector('.tpl-filter');
+          if (e.target.classList.contains('tpl-select')) {
+            select.disabled = !checkbox.checked;
+            if (!checkbox.checked) select.value = '';
+            updateTemplateMappings();
+          } else if (e.target.classList.contains('tpl-filter')) {
+            updateTemplateMappings();
+          }
+        });
+      }
+      
+      // Update mappings when filters are added or removed
+      const addFilterBtn = document.getElementById('addFilterBtn');
+      if (addFilterBtn) {
+        addFilterBtn.addEventListener('click', function() {
+          setTimeout(updateTemplateMappings, 100);
+          setTimeout(refreshFilterOptionsOnCards, 150);
+        });
+      }
+      
+      // Add event delegation for filter removal
+      const filtersContainer = document.getElementById('filtersContainer');
+      if (filtersContainer) {
+        filtersContainer.addEventListener('click', function(e) {
+          if (e.target.classList.contains('remove-filter-btn')) {
+            setTimeout(updateTemplateMappings, 100);
+            setTimeout(refreshFilterOptionsOnCards, 150);
+          }
+        });
+      }
+      
+      // Demo template injection removed for production to ensure mappings only reflect actual uploaded files.
+
+      // No template preparation UI in manual-field mode.
+    });
+  </script>
 </body>
 </html>
