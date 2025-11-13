@@ -1,0 +1,3 @@
+Warning: Some documents were skipped:
+- VSC Auto to Manual conversion.pdf: Invalid or corrupted PDF
+- vsc_instructions.pdf: Invalid or corrupted PDF

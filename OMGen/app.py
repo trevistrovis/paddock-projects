@@ -9,6 +9,7 @@ from utils.pdf_utils import (
     match_templates,
     merge_pdfs,
     find_warranty_documents,
+    fill_gutter_maintenance_doc,
 )
 from utils.excel_utils import extract_job_metadata
 from werkzeug.utils import secure_filename
@@ -109,6 +110,13 @@ def index():
             'total_dynamic_head': '',
         }
 
+        # Collect gutter information (optional)
+        gutter_data = {
+            'inlet_count': request.form.get('inlet_count', ''),
+            'inlet_size': request.form.get('inlet_size', ''),
+            'drawing_number': request.form.get('drawing_number', ''),
+        }
+
         sales_order = request.files['sales_order']
         ot_file = request.files.get('ot_file')
         job_folder = request.files.getlist('job_folder')
@@ -175,10 +183,40 @@ def index():
         logger.info(f"Maintenance docs exist: {os.path.exists(os.path.join(TEMPLATE_FOLDER, 'maintenance_docs'))}")
         logger.info(f"Processing with {len(filters_data) if filters_data else 0} filters")
         
-        templates, maintenance_docs = match_templates(item_keywords, TEMPLATE_FOLDER, flow_data=flow_data, filters_data=filters_data, template_mappings=template_mappings)
+        use_only_selected = template_count > 0
+        templates, maintenance_docs = match_templates(
+            item_keywords,
+            TEMPLATE_FOLDER,
+            flow_data=flow_data,
+            filters_data=filters_data,
+            template_mappings=template_mappings,
+            gutter_data=gutter_data,
+            use_only_selected=use_only_selected
+        )
         logger.info(f"Matched templates: {[os.path.basename(t) for t in templates]}")
         logger.info(f"Total templates returned: {len(templates)}")
         logger.info(f"Matched maintenance docs: {[os.path.basename(d) for d in maintenance_docs]}")
+
+        # If gutter data provided, ensure gutter_care.pdf is filled with those fields
+        if any(gutter_data.get(k) for k in ['inlet_count', 'inlet_size', 'drawing_number']):
+            try:
+                gutter_care_path = os.path.join(MAINTENANCE_DOCS, 'gutter_care.pdf')
+                if os.path.exists(gutter_care_path):
+                    filled_gutter_care = fill_gutter_maintenance_doc(gutter_care_path, gutter_data)
+                    # Replace existing occurrence or append
+                    replaced = False
+                    for i, p in enumerate(maintenance_docs):
+                        if os.path.basename(p).lower() == 'gutter_care.pdf':
+                            maintenance_docs[i] = filled_gutter_care
+                            replaced = True
+                            break
+                    if not replaced:
+                        maintenance_docs.append(filled_gutter_care)
+                    logger.info("Processed gutter_care.pdf with gutter data")
+                else:
+                    logger.warning(f"gutter_care.pdf not found in maintenance docs folder: {gutter_care_path}")
+            except Exception as e:
+                logger.error(f"Error preparing gutter_care.pdf: {e}")
 
         # Find warranty docs based on keywords and append as last section
         warranty_docs = find_warranty_documents(item_keywords)

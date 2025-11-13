@@ -343,7 +343,7 @@ def find_warranty_documents(keywords):
         logger.error(f"Error searching warranty documents: {e}")
         return []
 
-def match_templates(keywords, template_dir, flow_data=None, filters_data=None, template_mappings=None):
+def match_templates(keywords, template_dir, flow_data=None, filters_data=None, template_mappings=None, gutter_data=None, use_only_selected=False):
     """
     Match templates and include associated maintenance documents with improved matching algorithm.
     
@@ -363,6 +363,8 @@ def match_templates(keywords, template_dir, flow_data=None, filters_data=None, t
     logger.info(f"Template directory: {template_dir}")
     logger.info(f"Flow data provided: {flow_data is not None}")
     logger.info(f"Filters data provided: {filters_data is not None}")
+    logger.info(f"Gutter data provided: {gutter_data is not None}")
+    logger.info(f"Use only selected templates: {use_only_selected}")
     if filters_data:
         logger.info(f"Number of filters: {len(filters_data)}")
         for i, filter_data in enumerate(filters_data):
@@ -399,7 +401,10 @@ def match_templates(keywords, template_dir, flow_data=None, filters_data=None, t
     logger.debug(f"Search terms: {search_terms}")
     
     # If explicit template selections are provided, use ONLY those and skip keyword-based matching
-    if template_mappings:
+    if use_only_selected and not template_mappings:
+        logger.info("use_only_selected=True but no template mappings provided; returning no templates.")
+        template_list = []
+    elif template_mappings:
         logger.info("Template mappings provided; using only the explicitly selected templates.")
         template_list = []
         for selected_name in template_mappings.keys():
@@ -501,7 +506,9 @@ def match_templates(keywords, template_dir, flow_data=None, filters_data=None, t
             template_name = os.path.basename(template_path)
             logger.info(f"Checking template: {template_name}")
             has_flow_fields = check_template_for_flow_fields(template_path)
+            has_gutter_fields = check_template_for_gutter_fields(template_path)
             logger.info(f"Template {template_name} has flow fields: {has_flow_fields}")
+            logger.info(f"Template {template_name} has gutter fields: {has_gutter_fields}")
             
             if has_flow_fields:
                 # Check if we have a mapping for this template
@@ -534,7 +541,7 @@ def match_templates(keywords, template_dir, flow_data=None, filters_data=None, t
                         unique_id = f'{filter_name_safe}_{timestamp}'
                         
                         # Fill the template with this filter's data
-                        filled_path = fill_pdf_form_fields(template_path, matched_filter, filter_name=unique_id)
+                        filled_path = fill_pdf_form_fields(template_path, matched_filter, filter_name=unique_id, gutter_data=gutter_data)
                         
                         if filled_path:
                             logger.info(f"Successfully filled template for {filter_name}, path: {filled_path}")
@@ -566,7 +573,7 @@ def match_templates(keywords, template_dir, flow_data=None, filters_data=None, t
                         unique_id = f'{filter_name_safe}_{timestamp}'
                         
                         # Try to fill the template with this filter's data
-                        filled_path = fill_pdf_form_fields(template_path, filter_data, filter_name=unique_id)
+                        filled_path = fill_pdf_form_fields(template_path, filter_data, filter_name=unique_id, gutter_data=gutter_data)
                         
                         if filled_path:
                             logger.info(f"Successfully filled template for {filter_name}, path: {filled_path}")
@@ -582,9 +589,18 @@ def match_templates(keywords, template_dir, flow_data=None, filters_data=None, t
                     logger.info(f"No filter data available for template {template_name}")
                     filled_templates.append(template_path)
             else:
-                # For templates without flow fields, just add the original once
-                logger.info(f"Template {os.path.basename(template_path)} has no flow fields, adding as-is")
-                filled_templates.append(template_path)
+                # If no flow fields, try gutter-only fill when gutter data is provided
+                if gutter_data and has_gutter_fields and any(gutter_data.get(k) for k in ['inlet_count', 'inlet_size', 'drawing_number']):
+                    logger.info(f"Template {os.path.basename(template_path)} has gutter fields and gutter_data; attempting gutter fill")
+                    filled_path = fill_pdf_form_fields(template_path, {}, filter_name=None, gutter_data=gutter_data)
+                    if filled_path:
+                        filled_templates.append(filled_path)
+                    else:
+                        filled_templates.append(template_path)
+                else:
+                    # For templates without applicable fields, just add the original once
+                    logger.info(f"Template {os.path.basename(template_path)} has no applicable fields, adding as-is")
+                    filled_templates.append(template_path)
                 
         logger.info(f"Final template list contains {len(filled_templates)} templates: {[os.path.basename(t) for t in filled_templates]}")
         
@@ -713,6 +729,126 @@ def validate_pdf(pdf_path):
     except Exception as e:
         return False
 
+def add_gutter_form_fields_in_pdf(pdf_path):
+    """
+    Scan a PDF for underscore placeholders following sentences about gutter information and
+    create text form fields positioned over those underscores.
+
+    Field names will be standardized: inlet_count, inlet_size, drawing_number.
+
+    Returns True if any fields were added; otherwise False.
+    """
+    try:
+        doc = fitz.open(pdf_path)
+        added = 0
+
+        for page_index in range(len(doc)):
+            page = doc[page_index]
+            words = page.get_text("words") or []
+            lines = {}
+            for w in words:
+                key = (w[5], w[6])
+                lines.setdefault(key, []).append(w)
+
+            for key, words_in_line in lines.items():
+                words_in_line.sort(key=lambda w: w[0])
+                line_text = ' '.join(w[4] for w in words_in_line)
+                placeholder_idx = _line_contains_placeholder(words_in_line)
+                if placeholder_idx == -1:
+                    continue
+
+                field_key = _classify_gutter_field_by_context(line_text)
+                if not field_key:
+                    continue
+
+                ux0, uy0, ux1, uy1, _, *_ = words_in_line[placeholder_idx]
+                rect = fitz.Rect(ux0 - 1, uy0 - 1, ux1 + 1, uy1 + 1)
+
+                field_name = field_key
+                suffix = 1
+                existing_names = {w.field_name for w in (page.widgets() or []) if w.field_name}
+                while field_name in existing_names:
+                    suffix += 1
+                    field_name = f"{field_key}_{suffix}"
+
+                try:
+                    widget = page.new_widget(
+                        rect=rect,
+                        field_name=field_name,
+                        field_type=fitz.PDF_WIDGET_TYPE_TEXT,
+                    )
+                    widget.text_fontsize = 10
+                    widget.text_color = (0, 0, 1)
+                    widget.border_color = (0, 0, 0)
+                    widget.fill_color = (1, 1, 1)
+                    widget.update()
+                    added += 1
+                    logger.info(f"Added gutter text field '{field_name}' on page {page_index+1} at {rect}")
+                except Exception as e:
+                    logger.error(f"Failed adding gutter widget on page {page_index+1}: {e}")
+
+        if added:
+            doc.save(pdf_path, incremental=True)
+            logger.info(f"Added {added} gutter fields to {os.path.basename(pdf_path)}")
+            doc.close()
+            return True
+        else:
+            doc.close()
+            logger.info(f"No gutter placeholders found in {os.path.basename(pdf_path)}")
+            return False
+    except Exception as e:
+        logger.error(f"Error processing {pdf_path} for adding gutter form fields: {e}")
+        return False
+
+def fill_gutter_maintenance_doc(pdf_path, gutter_data):
+    """
+    Ensure a gutter maintenance PDF has fields, then fill with gutter_data.
+    Returns the filled path if filled, otherwise original path.
+    """
+    try:
+        has_fields = check_template_for_gutter_fields(pdf_path)
+        if not has_fields:
+            logger.info(f"No gutter fields found in {os.path.basename(pdf_path)}, attempting to add.")
+            add_gutter_form_fields_in_pdf(pdf_path)
+        filled = fill_pdf_form_fields(pdf_path, flow_data={}, filter_name=None, gutter_data=gutter_data)
+        return filled or pdf_path
+    except Exception as e:
+        logger.error(f"Error filling gutter maintenance doc {pdf_path}: {e}")
+        return pdf_path
+
+def check_template_for_gutter_fields(pdf_path):
+    """
+    Check if a template has form fields for gutter information: inlet_count, inlet_size, drawing_number.
+    """
+    try:
+        doc = fitz.open(pdf_path)
+        widgets = []
+        for page in doc:
+            widgets.extend(page.widgets())
+        if not widgets:
+            doc.close()
+            return False
+        field_variations = {
+            'inlet_count': ['inlet_count', 'inlet count', 'inletcount', 'gutter_inlet_count', 'gutter inlet count'],
+            'inlet_size': ['inlet_size', 'inlet size', 'inletsize', 'gutter_inlet_size', 'gutter inlet size'],
+            'drawing_number': ['drawing_number', 'drawing number', 'drawingnumber', 'gutter_drawing_number', 'gutter drawing number']
+        }
+        for widget in widgets:
+            field_name = (widget.field_name or '').strip()
+            if not field_name:
+                continue
+            normalized_field = field_name.lower().replace(' ', '_')
+            for variations in field_variations.values():
+                normalized_variations = [v.lower().replace(' ', '_') for v in variations]
+                if normalized_field in normalized_variations:
+                    doc.close()
+                    return True
+        doc.close()
+        return False
+    except Exception as e:
+        logger.error(f"Error checking template for gutter fields: {str(e)}")
+        return False
+
 def check_template_for_flow_fields(pdf_path):
     """
     Check if a template has form fields that can be filled with flow data.
@@ -763,7 +899,7 @@ def check_template_for_flow_fields(pdf_path):
         logger.error(f"Error checking template for flow fields: {str(e)}")
         return False
 
-def fill_pdf_form_fields(pdf_path, flow_data, filter_name=None):
+def fill_pdf_form_fields(pdf_path, flow_data, filter_name=None, gutter_data=None):
     """
     Fill PDF form fields with flow rate data.
     
@@ -777,6 +913,7 @@ def fill_pdf_form_fields(pdf_path, flow_data, filter_name=None):
     """
     logger.info(f"Attempting to fill fields in {os.path.basename(pdf_path)} for filter: {filter_name}")
     logger.info(f"Flow data: {flow_data}")
+    logger.info(f"Gutter data: {gutter_data}")
     try:
         # Open the PDF
         doc = fitz.open(pdf_path)
@@ -797,11 +934,17 @@ def fill_pdf_form_fields(pdf_path, flow_data, filter_name=None):
         made_changes = False
         fields_modified = 0
         
-        # Define field name variations
+        # Define field name variations (flow)
         field_variations = {
             'primary_flow_rate': ['primary_flow_rate', 'Primary_Flow_Rate', 'primary flow rate', 'primaryflowrate'],
             'backwash_rate': ['backwash_rate', 'backwash rate', 'backwashrate'],
             'total_dynamic_head': ['total_dynamic_head', 'total dynamic head', 'tdh', 'totaldynamichead']
+        }
+        # Define gutter field name variations
+        gutter_variations = {
+            'inlet_count': ['inlet_count', 'inlet count', 'inletcount', 'gutter_inlet_count', 'gutter inlet count'],
+            'inlet_size': ['inlet_size', 'inlet size', 'inletsize', 'gutter_inlet_size', 'gutter inlet size'],
+            'drawing_number': ['drawing_number', 'drawing number', 'drawingnumber', 'gutter_drawing_number', 'gutter drawing number']
         }
         
         # Map flow data keys to their values, adding GPM where appropriate
@@ -809,6 +952,12 @@ def fill_pdf_form_fields(pdf_path, flow_data, filter_name=None):
             'primary_flow_rate': f"{flow_data.get('primary_flow_rate', '')} GPM" if flow_data.get('primary_flow_rate') else '',
             'backwash_rate': f"{flow_data.get('backwash_rate', '')} GPM" if flow_data.get('backwash_rate') else '',
             'total_dynamic_head': flow_data.get('total_dynamic_head', '')
+        }
+        # Gutter formatted values (no suffixes)
+        gutter_values = {
+            'inlet_count': str(gutter_data.get('inlet_count', '')).strip() if gutter_data else '',
+            'inlet_size': str(gutter_data.get('inlet_size', '')).strip() if gutter_data else '',
+            'drawing_number': str(gutter_data.get('drawing_number', '')).strip() if gutter_data else ''
         }
         
         # Create a page-to-widgets mapping
@@ -887,6 +1036,41 @@ def fill_pdf_form_fields(pdf_path, flow_data, filter_name=None):
                     except Exception as e:
                         logger.error(f"Error updating field: {str(e)}")
                     # Note: We removed the break statement here to allow all matching fields to be filled
+            # Check gutter fields if provided
+            if gutter_data:
+                for data_key, variations in gutter_variations.items():
+                    normalized_field = field_name.lower().replace(' ', '_')
+                    normalized_variations = [v.lower().replace(' ', '_') for v in variations]
+                    if normalized_field in normalized_variations and gutter_values[data_key]:
+                        value = gutter_values[data_key]
+                        logger.info(f"Gutter match found! Filling field '{field_name}' with value '{value}'")
+                        try:
+                            if widget.field_type_string == 'Text':
+                                widget.field_value = value
+                                widget.update()
+                                made_changes = True
+                                fields_modified += 1
+                                logger.info(f"Successfully updated gutter text field with value '{value}'")
+                            elif widget.field_type_string == 'Choice':
+                                options = widget.choice_values
+                                found_match = False
+                                for option in options:
+                                    if value.lower() in option.lower():
+                                        widget.field_value = option
+                                        widget.update()
+                                        made_changes = True
+                                        fields_modified += 1
+                                        found_match = True
+                                        break
+                                if not found_match and options:
+                                    widget.field_value = options[0]
+                                    widget.update()
+                                    made_changes = True
+                                    fields_modified += 1
+                            else:
+                                logger.info(f"Unsupported field type for gutter field: {widget.field_type_string}")
+                        except Exception as e:
+                            logger.error(f"Error updating gutter field: {str(e)}")
         
         if made_changes:
             # Save to a new file
@@ -966,6 +1150,21 @@ def organize_files_by_section(cover_page, templates, maintenance_docs, job_files
     if cover_page:
         organized_files.append(cover_page)
         logger.info(f"Added cover page to organized files: {os.path.basename(cover_page)}")
+        # Immediately after cover, include Table of Contents and Special Instructions if present
+        try:
+            project_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            maint_dir = os.path.join(project_dir, "maintenance_docs")
+            toc_path = os.path.join(maint_dir, "table_of_contents.pdf")
+            spec_path = os.path.join(maint_dir, "special_instructions.pdf")
+            # Append in defined order if they exist and are valid PDFs
+            for p in [toc_path, spec_path]:
+                if os.path.exists(p) and p.lower().endswith('.pdf'):
+                    organized_files.append(p)
+                    logger.info(f"Inserted always-include doc after cover: {os.path.basename(p)}")
+                else:
+                    logger.warning(f"Always-include doc missing or invalid: {p}")
+        except Exception as e:
+            logger.error(f"Error inserting always-include docs after cover: {e}")
     
     # Add Equipment Templates section
     if templates:
@@ -981,11 +1180,29 @@ def organize_files_by_section(cover_page, templates, maintenance_docs, job_files
     
     # Add Maintenance & Operation section
     if maintenance_docs:
+        try:
+            always_include_basenames = {"table_of_contents.pdf", "special_instructions.pdf", "additional_info.pdf"}
+            maintenance_docs = [p for p in maintenance_docs if os.path.basename(p).lower() not in always_include_basenames]
+        except Exception:
+            pass
         maintenance_header = create_section_header("Maintenance & Operation Guides")
         organized_files.append(maintenance_header)
         logger.info(f"Added maintenance header to organized files")
         organized_files.extend(maintenance_docs)
         logger.info(f"Added {len(maintenance_docs)} maintenance docs to organized files")
+
+    # Always include additional_info.pdf after Maintenance section and before Project Documentation
+    try:
+        project_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        maint_dir = os.path.join(project_dir, "maintenance_docs")
+        additional_info_path = os.path.join(maint_dir, "additional_info.pdf")
+        if os.path.exists(additional_info_path) and additional_info_path.lower().endswith('.pdf'):
+            organized_files.append(additional_info_path)
+            logger.info("Inserted always-include doc before project docs: additional_info.pdf")
+        else:
+            logger.warning(f"Always-include doc missing or invalid: {additional_info_path}")
+    except Exception as e:
+        logger.error(f"Error inserting additional_info.pdf: {e}")
     
     # Add Project Documentation section
     if job_files:
