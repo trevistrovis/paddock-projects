@@ -111,10 +111,15 @@ def index():
         }
 
         # Collect gutter information (optional)
+        gutter_features = request.form.getlist('gutter_features') or []
         gutter_data = {
             'inlet_count': request.form.get('inlet_count', ''),
             'inlet_size': request.form.get('inlet_size', ''),
             'drawing_number': request.form.get('drawing_number', ''),
+            'gutter_option': request.form.get('gutter_option', ''),
+            'has_grating': 'Yes' if request.form.get('has_grating') == 'yes' else 'No',
+            'gutter_features': gutter_features,
+            'gutter_features_text': ", ".join(gutter_features) if gutter_features else ''
         }
 
         sales_order = request.files['sales_order']
@@ -197,8 +202,15 @@ def index():
         logger.info(f"Total templates returned: {len(templates)}")
         logger.info(f"Matched maintenance docs: {[os.path.basename(d) for d in maintenance_docs]}")
 
-        # If gutter data provided, ensure gutter_care.pdf is filled with those fields
-        if any(gutter_data.get(k) for k in ['inlet_count', 'inlet_size', 'drawing_number']):
+        # If any gutter data provided, ensure gutter_care.pdf is filled with those fields
+        if any(gutter_data.get(k) for k in [
+            'inlet_count',
+            'inlet_size',
+            'drawing_number',
+            'gutter_option',
+            'has_grating',
+            'gutter_features_text',
+        ]):
             try:
                 gutter_care_path = os.path.join(MAINTENANCE_DOCS, 'gutter_care.pdf')
                 if os.path.exists(gutter_care_path):
@@ -263,6 +275,34 @@ def index():
             logger.info("Appended required warranty doc: SALES BULLETIN 84-4-R W-LOGO revformat7-2021.pdf")
         else:
             logger.warning(f"Required warranty doc missing: {sales_bulletin_path}")
+
+        # After maintenance_docs list is finalized, replace any items with their
+        # filled counterparts from MAINTENANCE_DOCS/filled when present.
+        try:
+            filled_dir = os.path.join(MAINTENANCE_DOCS, 'filled')
+            if os.path.isdir(filled_dir):
+                # Build mapping from original basename -> filled path
+                filled_map = {}
+                for fname in os.listdir(filled_dir):
+                    if not fname.lower().endswith('.pdf'):
+                        continue
+                    # For files like filled_gutter_care.pdf, infer original name
+                    lower = fname.lower()
+                    if lower.startswith('filled_') and len(fname) > len('filled_'):
+                        orig = fname[len('filled_'):]
+                        filled_map[orig.lower()] = os.path.join(filled_dir, fname)
+                if filled_map:
+                    new_maintenance = []
+                    for p in maintenance_docs:
+                        base = os.path.basename(p).lower()
+                        if base in filled_map:
+                            logger.info(f"Using filled maintenance doc for {base}: {os.path.basename(filled_map[base])}")
+                            new_maintenance.append(filled_map[base])
+                        else:
+                            new_maintenance.append(p)
+                    maintenance_docs = new_maintenance
+        except Exception as e:
+            logger.error(f"Error swapping in filled maintenance docs: {e}")
 
         # Create cover page with flow data from all filters
         cover_pdf_path = generate_cover_page(customer, job_name, phone, filters_data=filters_data)

@@ -64,6 +64,42 @@
         </div>
         <div class="card-body">
           <div class="row g-3">
+            <div class="col-sm-6">
+              <label class="form-label">Gutter Option</label>
+              <select class="form-select" name="gutter_option">
+                <option value="">-- Select Gutter Option --</option>
+                <option value="R300">R300</option>
+                <option value="C100">C100</option>
+                <option value="M100">M100</option>
+              </select>
+            </div>
+            <div class="col-sm-6 d-flex align-items-end">
+              <div class="form-check">
+                <input class="form-check-input" type="checkbox" name="has_grating" id="has_grating" value="yes">
+                <label class="form-check-label" for="has_grating">Grating (Yes/No)</label>
+              </div>
+            </div>
+            <div class="col-12">
+              <label class="form-label">Features</label>
+              <div class="d-flex flex-wrap gap-3">
+                <div class="form-check">
+                  <input class="form-check-input" type="checkbox" name="gutter_features" id="feature_TG" value="TG">
+                  <label class="form-check-label" for="feature_TG">TG (Top Grate)</label>
+                </div>
+                <div class="form-check">
+                  <input class="form-check-input" type="checkbox" name="gutter_features" id="feature_DI" value="DI">
+                  <label class="form-check-label" for="feature_DI">DI (Drop In)</label>
+                </div>
+                <div class="form-check">
+                  <input class="form-check-input" type="checkbox" name="gutter_features" id="feature_TGEC" value="TGEC">
+                  <label class="form-check-label" for="feature_TGEC">TGEC (Top Grate Extra Chamber)</label>
+                </div>
+                <div class="form-check">
+                  <input class="form-check-input" type="checkbox" name="gutter_features" id="feature_TGDD" value="TGDD">
+                  <label class="form-check-label" for="feature_TGDD">TGDD (Top Grate Deck Drain with Evacuator)</label>
+                </div>
+              </div>
+            </div>
             <div class="col-sm-4">
               <label class="form-label">Inlet Count</label>
               <input type="number" class="form-control" name="inlet_count" placeholder="###">

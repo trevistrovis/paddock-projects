@@ -831,7 +831,10 @@ def check_template_for_gutter_fields(pdf_path):
         field_variations = {
             'inlet_count': ['inlet_count', 'inlet count', 'inletcount', 'gutter_inlet_count', 'gutter inlet count'],
             'inlet_size': ['inlet_size', 'inlet size', 'inletsize', 'gutter_inlet_size', 'gutter inlet size'],
-            'drawing_number': ['drawing_number', 'drawing number', 'drawingnumber', 'gutter_drawing_number', 'gutter drawing number']
+            'drawing_number': ['drawing_number', 'drawing number', 'drawingnumber', 'gutter_drawing_number', 'gutter drawing number'],
+            'gutter_option': ['gutter_option', 'gutter option', 'gutter_options', 'gutter options', 'gutter type', 'gutter_type'],
+            'has_grating': ['has_grating', 'grating', 'gutter_grating', 'gutter grating', 'has grating'],
+            'gutter_features': ['gutter_features', 'gutter features', 'features']
         }
         for widget in widgets:
             field_name = (widget.field_name or '').strip()
@@ -944,7 +947,10 @@ def fill_pdf_form_fields(pdf_path, flow_data, filter_name=None, gutter_data=None
         gutter_variations = {
             'inlet_count': ['inlet_count', 'inlet count', 'inletcount', 'gutter_inlet_count', 'gutter inlet count'],
             'inlet_size': ['inlet_size', 'inlet size', 'inletsize', 'gutter_inlet_size', 'gutter inlet size'],
-            'drawing_number': ['drawing_number', 'drawing number', 'drawingnumber', 'gutter_drawing_number', 'gutter drawing number']
+            'drawing_number': ['drawing_number', 'drawing number', 'drawingnumber', 'gutter_drawing_number', 'gutter drawing number'],
+            'gutter_option': ['gutter_option', 'gutter option', 'gutter_options', 'gutter options', 'gutter type', 'gutter_type'],
+            'has_grating': ['has_grating', 'grating', 'gutter_grating', 'gutter grating', 'has grating'],
+            'gutter_features': ['gutter_features', 'gutter features', 'features']
         }
         
         # Map flow data keys to their values, adding GPM where appropriate
@@ -957,26 +963,22 @@ def fill_pdf_form_fields(pdf_path, flow_data, filter_name=None, gutter_data=None
         gutter_values = {
             'inlet_count': str(gutter_data.get('inlet_count', '')).strip() if gutter_data else '',
             'inlet_size': str(gutter_data.get('inlet_size', '')).strip() if gutter_data else '',
-            'drawing_number': str(gutter_data.get('drawing_number', '')).strip() if gutter_data else ''
+            'drawing_number': str(gutter_data.get('drawing_number', '')).strip() if gutter_data else '',
+            'gutter_option': str(gutter_data.get('gutter_option', '')).strip() if gutter_data else '',
+            'has_grating': str(gutter_data.get('has_grating', '')).strip() if gutter_data else '',
+            'gutter_features': str(gutter_data.get('gutter_features_text', '')).strip() if gutter_data else ''
         }
         
-        # Create a page-to-widgets mapping
-        page_widgets = {}
+        # Collect all widgets (including duplicates with same field_name)
+        all_widgets = []
         for page_num in range(len(doc)):
             page = doc[page_num]
-            for widget in page.widgets():
-                if widget.field_type_string == 'Text':
-                    page_widgets[widget.field_name] = (page, widget)
-        
-        # Create a mapping for all form fields, not just text fields
-        all_widgets = {}
-        for page_num in range(len(doc)):
-            page = doc[page_num]
-            for widget in page.widgets():
-                all_widgets[widget.field_name] = (page, widget)
+            for widget in page.widgets() or []:
+                field_name = widget.field_name or ''
+                all_widgets.append((field_name, page, widget))
         
         # Try to fill in fields
-        for field_name, (page, widget) in all_widgets.items():
+        for field_name, page, widget in all_widgets:
             logger.info(f"Found field with name: {field_name}, type: {widget.field_type_string}")
             
             if not field_name:  # Skip if no field name
@@ -1008,22 +1010,48 @@ def fill_pdf_form_fields(pdf_path, flow_data, filter_name=None, gutter_data=None
                             logger.info(f"Successfully updated text field with value '{value}'")
                         elif widget.field_type_string == 'Choice':
                             # Dropdown/combo box field
-                            options = widget.choice_values
+                            options = widget.choice_values or []
                             logger.info(f"Found dropdown with options: {options}")
-                            
-                            # Try to find a matching option
+
+                            def _norm(s: str) -> str:
+                                import re as _re
+                                return _re.sub(r'[^a-z0-9]+', '', (s or '').lower())
+
+                            v_norm = _norm(value)
                             found_match = False
+                            # 1) Exact normalized match
                             for option in options:
-                                if value.lower() in option.lower():
+                                if _norm(option) == v_norm and option is not None:
                                     widget.field_value = option
                                     widget.update()
                                     made_changes = True
-                                    logger.info(f"Selected dropdown option '{option}'")
+                                    logger.info(f"Selected dropdown option by normalized exact match '{option}'")
                                     found_match = True
                                     fields_modified += 1
                                     break
-                            
-                            # If no match found but options exist, use the first one
+                            # 2) Substring match (case-insensitive)
+                            if not found_match:
+                                for option in options:
+                                    if value.lower() in (option or '').lower():
+                                        widget.field_value = option
+                                        widget.update()
+                                        made_changes = True
+                                        logger.info(f"Selected dropdown option by substring '{option}'")
+                                        found_match = True
+                                        fields_modified += 1
+                                        break
+                            # 3) Startswith match on normalized
+                            if not found_match:
+                                for option in options:
+                                    if _norm(option).startswith(v_norm) or v_norm.startswith(_norm(option)):
+                                        widget.field_value = option
+                                        widget.update()
+                                        made_changes = True
+                                        logger.info(f"Selected dropdown option by startswith '{option}'")
+                                        found_match = True
+                                        fields_modified += 1
+                                        break
+                            # Fallback: select first option if any
                             if not found_match and options:
                                 widget.field_value = options[0]
                                 widget.update()
@@ -1046,39 +1074,127 @@ def fill_pdf_form_fields(pdf_path, flow_data, filter_name=None, gutter_data=None
                         logger.info(f"Gutter match found! Filling field '{field_name}' with value '{value}'")
                         try:
                             if widget.field_type_string == 'Text':
+                                # To avoid field-name collisions across merged PDFs,
+                                # rename each drawing_number-like field to a
+                                # gutter-specific name while keeping them distinct
+                                # and editable.
+                                if data_key == 'drawing_number':
+                                    try:
+                                        original_name = widget.field_name or ''
+                                        base = 'gutter_drawing_number'
+                                        new_name = base
+                                        # Preserve any numeric suffix (e.g. drawing_number_2)
+                                        if original_name:
+                                            parts = original_name.split('_')
+                                            if len(parts) > 2 and parts[-1].isdigit():
+                                                new_name = f"{base}_{parts[-1]}"
+                                        widget.field_name = new_name
+                                        logger.info(
+                                            f"Renamed drawing_number-like field '{original_name}' to '{new_name}' in filled PDF"
+                                        )
+                                    except Exception as rn_err:
+                                        logger.warning(f"Could not rename drawing_number field: {rn_err}")
+
                                 widget.field_value = value
                                 widget.update()
                                 made_changes = True
                                 fields_modified += 1
                                 logger.info(f"Successfully updated gutter text field with value '{value}'")
                             elif widget.field_type_string == 'Choice':
-                                options = widget.choice_values
+                                options = widget.choice_values or []
+                                def _norm(s: str) -> str:
+                                    import re as _re
+                                    return _re.sub(r'[^a-z0-9]+', '', (s or '').lower())
+                                v_norm = _norm(value)
                                 found_match = False
                                 for option in options:
-                                    if value.lower() in option.lower():
+                                    if _norm(option) == v_norm and option is not None:
                                         widget.field_value = option
                                         widget.update()
                                         made_changes = True
                                         fields_modified += 1
                                         found_match = True
                                         break
+                                if not found_match:
+                                    for option in options:
+                                        if value.lower() in (option or '').lower():
+                                            widget.field_value = option
+                                            widget.update()
+                                            made_changes = True
+                                            fields_modified += 1
+                                            found_match = True
+                                            break
+                                if not found_match:
+                                    for option in options:
+                                        if _norm(option).startswith(v_norm) or v_norm.startswith(_norm(option)):
+                                            widget.field_value = option
+                                            widget.update()
+                                            made_changes = True
+                                            fields_modified += 1
+                                            found_match = True
+                                            break
                                 if not found_match and options:
                                     widget.field_value = options[0]
                                     widget.update()
                                     made_changes = True
                                     fields_modified += 1
+                            elif widget.field_type_string == 'Button':
+                                # Checkbox/radio: treat 'has_grating' specially
+                                if data_key == 'has_grating':
+                                    # Set checked for Yes, unchecked for No
+                                    yes = value.strip().lower() in ('yes', 'true', '1', 'on')
+                                    try:
+                                        widget.set_on(yes)
+                                    except Exception:
+                                        # Fallback to setting field_value
+                                        widget.field_value = 'Yes' if yes else 'Off'
+                                    widget.update()
+                                    made_changes = True
+                                    fields_modified += 1
+                                else:
+                                    logger.info(f"Button field encountered for '{field_name}', no special handling applied")
                             else:
                                 logger.info(f"Unsupported field type for gutter field: {widget.field_type_string}")
                         except Exception as e:
                             logger.error(f"Error updating gutter field: {str(e)}")
+
+                # Additionally: toggle individual feature checkboxes if present
+                try:
+                    selected = set((gutter_data.get('gutter_features') or []))
+                    feature_map = {
+                        'tg': ['tg', 'feature_tg', 'tg_feature', 'top_grate', 'top grate'],
+                        'di': ['di', 'feature_di', 'di_feature', 'drop_in', 'drop in'],
+                        'tgec': ['tgec', 'feature_tgec', 'tgec_feature', 'top_grate_extra_chamber', 'top grate extra chamber'],
+                        'tgdd': ['tgdd', 'feature_tgdd', 'tgdd_feature', 'top_grate_deck_drain', 'top grate deck drain']
+                    }
+                    nf = field_name.lower().replace(' ', '_')
+                    for code, aliases in feature_map.items():
+                        if nf in [a.replace(' ', '_') for a in aliases]:
+                            is_on = code.upper() in selected
+                            if widget.field_type_string == 'Button':
+                                try:
+                                    widget.set_on(is_on)
+                                except Exception:
+                                    widget.field_value = 'Yes' if is_on else 'Off'
+                                widget.update()
+                                made_changes = True
+                                fields_modified += 1
+                            elif widget.field_type_string == 'Text':
+                                widget.field_value = 'Yes' if is_on else 'No'
+                                widget.update()
+                                made_changes = True
+                                fields_modified += 1
+                            break
+                except Exception as e:
+                    logger.error(f"Error updating individual feature checkbox: {e}")
         
         if made_changes:
             # Save to a new file
             output_dir = os.path.join(os.path.dirname(pdf_path), 'filled')
             os.makedirs(output_dir, exist_ok=True)
-            
+
             base_name = os.path.basename(pdf_path)
-            
+
             # If filter name is provided, include it in the filename
             if filter_name:
                 filter_name_safe = filter_name.replace(' ', '_').replace('/', '_').replace('\\', '_')
@@ -1086,15 +1202,32 @@ def fill_pdf_form_fields(pdf_path, flow_data, filter_name=None, gutter_data=None
                 filled_path = os.path.join(output_dir, f'{filter_name_safe}_{base_name}')
             else:
                 filled_path = os.path.join(output_dir, f'filled_{base_name}')
-                
+
             logger.info(f"Generated filled path: {filled_path}")
-            
-            # Save the changes
-            doc.save(filled_path)
-            logger.info(f"Saved filled PDF to: {filled_path} with {fields_modified} fields modified")
-            
+
+            # Save the changes, handling Windows permission issues when overwriting
+            try:
+                doc.save(filled_path)
+                logger.info(f"Saved filled PDF to: {filled_path} with {fields_modified} fields modified")
+                final_path = filled_path
+            except Exception as e:
+                logger.error(f"Primary save failed for {filled_path}: {e}. Retrying with unique name.")
+                try:
+                    import time as _time
+                    ts = int(_time.time() * 1000)
+                    # For gutter_care.pdf this yields filled_gutter_care_<ts>.pdf
+                    alt_name = f"filled_{os.path.splitext(base_name)[0]}_{ts}.pdf"
+                    alt_path = os.path.join(output_dir, alt_name)
+                    doc.save(alt_path)
+                    logger.info(f"Saved filled PDF to alternate path: {alt_path}")
+                    final_path = alt_path
+                except Exception as e2:
+                    logger.error(f"Alternate save also failed: {e2}")
+                    doc.close()
+                    return None
+
             doc.close()
-            return filled_path
+            return final_path
         else:
             logger.warning(f"No fields were modified in {os.path.basename(pdf_path)} for filter {filter_name}")
             doc.close()
@@ -1166,30 +1299,47 @@ def organize_files_by_section(cover_page, templates, maintenance_docs, job_files
         except Exception as e:
             logger.error(f"Error inserting always-include docs after cover: {e}")
     
-    # Add Equipment Templates section
+    # Prepare Maintenance & Operation section and separate gutter care from other docs
+    primary_gutter_doc = None
+    remaining_maintenance = []
+    if maintenance_docs:
+        try:
+            always_include_basenames = {"table_of_contents.pdf", "special_instructions.pdf", "additional_info.pdf"}
+            filtered = [p for p in maintenance_docs if os.path.basename(p).lower() not in always_include_basenames]
+        except Exception:
+            filtered = maintenance_docs
+
+        # Identify filled gutter care doc (e.g., filled_gutter_care*.pdf)
+        for p in filtered:
+            base = os.path.basename(p).lower()
+            if "gutter_care" in base and primary_gutter_doc is None:
+                primary_gutter_doc = p
+            else:
+                remaining_maintenance.append(p)
+
+        maintenance_header = create_section_header("Maintenance & Operation Guides")
+        organized_files.append(maintenance_header)
+        logger.info("Added maintenance header to organized files")
+
+        # Place filled gutter care doc first in Maintenance & Operation, if present
+        if primary_gutter_doc:
+            organized_files.append(primary_gutter_doc)
+            logger.info(f"Placed primary gutter maintenance doc first: {os.path.basename(primary_gutter_doc)}")
+
+    # Add Equipment Templates section immediately after the primary gutter doc
     if templates:
         template_header = create_section_header("Equipment Templates")
         organized_files.append(template_header)
-        logger.info(f"Added template header to organized files")
-        
-        # Log each template being added
+        logger.info("Added template header to organized files")
         logger.info(f"Adding {len(templates)} templates to organized files:")
         for i, template in enumerate(templates):
             organized_files.append(template)
             logger.info(f"  {i+1}. Added template: {os.path.basename(template)}")
-    
-    # Add Maintenance & Operation section
-    if maintenance_docs:
-        try:
-            always_include_basenames = {"table_of_contents.pdf", "special_instructions.pdf", "additional_info.pdf"}
-            maintenance_docs = [p for p in maintenance_docs if os.path.basename(p).lower() not in always_include_basenames]
-        except Exception:
-            pass
-        maintenance_header = create_section_header("Maintenance & Operation Guides")
-        organized_files.append(maintenance_header)
-        logger.info(f"Added maintenance header to organized files")
-        organized_files.extend(maintenance_docs)
-        logger.info(f"Added {len(maintenance_docs)} maintenance docs to organized files")
+
+    # After templates, append the remaining Maintenance & Operation docs
+    if remaining_maintenance:
+        organized_files.extend(remaining_maintenance)
+        logger.info(f"Added {len(remaining_maintenance)} remaining maintenance docs after templates")
 
     # Always include additional_info.pdf after Maintenance section and before Project Documentation
     try:
