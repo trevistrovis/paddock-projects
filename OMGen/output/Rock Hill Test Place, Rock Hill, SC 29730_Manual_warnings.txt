@@ -1,4 +1,0 @@
-Warning: Some documents were skipped:
-- Prevent-p-poster.pdf: Invalid or corrupted PDF
-- VSC Auto to Manual conversion.pdf: Invalid or corrupted PDF
-- vsc_instructions.pdf: Invalid or corrupted PDF
