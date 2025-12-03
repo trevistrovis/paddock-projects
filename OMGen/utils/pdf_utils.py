@@ -969,6 +969,25 @@ def fill_pdf_form_fields(pdf_path, flow_data, filter_name=None, gutter_data=None
             'gutter_features': str(gutter_data.get('gutter_features_text', '')).strip() if gutter_data else ''
         }
         
+        # Derive a safe base name from the PDF filename for field renaming
+        base_name = os.path.splitext(os.path.basename(pdf_path))[0]
+        safe_base = re.sub(r"[^a-zA-Z0-9]+", "_", base_name).strip("_").lower() or "doc"
+
+        def _make_unique_field_name(original_name: str, data_key: str) -> str:
+            """Create a template-specific, per-field unique name to avoid collisions.
+
+            Example: filter_template.pdf, data_key='primary_flow_rate'
+            -> filter_template_primary_flow_rate or filter_template_primary_flow_rate_2
+            """
+            base = f"{safe_base}_{data_key}"
+            new_name = base
+            orig = (original_name or "").strip()
+            if orig:
+                parts = orig.split("_")
+                if parts and parts[-1].isdigit():
+                    new_name = f"{base}_{parts[-1]}"
+            return new_name
+
         # Collect all widgets (including duplicates with same field_name)
         all_widgets = []
         for page_num in range(len(doc)):
@@ -1002,7 +1021,17 @@ def fill_pdf_form_fields(pdf_path, flow_data, filter_name=None, gutter_data=None
                     try:
                         # Handle different field types
                         if widget.field_type_string == 'Text':
-                            # Regular text field
+                            # Regular text field; rename to a template-specific name first
+                            try:
+                                original_name = widget.field_name or ''
+                                new_name = _make_unique_field_name(original_name, data_key)
+                                widget.field_name = new_name
+                                logger.info(
+                                    f"Renamed flow field '{original_name}' to '{new_name}' in filled PDF"
+                                )
+                            except Exception as rn_err:
+                                logger.warning(f"Could not rename flow field '{field_name}': {rn_err}")
+
                             widget.field_value = value
                             widget.update()
                             made_changes = True
@@ -1074,26 +1103,16 @@ def fill_pdf_form_fields(pdf_path, flow_data, filter_name=None, gutter_data=None
                         logger.info(f"Gutter match found! Filling field '{field_name}' with value '{value}'")
                         try:
                             if widget.field_type_string == 'Text':
-                                # To avoid field-name collisions across merged PDFs,
-                                # rename each drawing_number-like field to a
-                                # gutter-specific name while keeping them distinct
-                                # and editable.
-                                if data_key == 'drawing_number':
-                                    try:
-                                        original_name = widget.field_name or ''
-                                        base = 'gutter_drawing_number'
-                                        new_name = base
-                                        # Preserve any numeric suffix (e.g. drawing_number_2)
-                                        if original_name:
-                                            parts = original_name.split('_')
-                                            if len(parts) > 2 and parts[-1].isdigit():
-                                                new_name = f"{base}_{parts[-1]}"
-                                        widget.field_name = new_name
-                                        logger.info(
-                                            f"Renamed drawing_number-like field '{original_name}' to '{new_name}' in filled PDF"
-                                        )
-                                    except Exception as rn_err:
-                                        logger.warning(f"Could not rename drawing_number field: {rn_err}")
+                                # Rename all gutter text fields to template-specific names
+                                try:
+                                    original_name = widget.field_name or ''
+                                    new_name = _make_unique_field_name(original_name, data_key)
+                                    widget.field_name = new_name
+                                    logger.info(
+                                        f"Renamed gutter field '{original_name}' to '{new_name}' in filled PDF"
+                                    )
+                                except Exception as rn_err:
+                                    logger.warning(f"Could not rename gutter field '{field_name}': {rn_err}")
 
                                 widget.field_value = value
                                 widget.update()

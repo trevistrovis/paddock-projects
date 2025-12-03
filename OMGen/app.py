@@ -112,15 +112,30 @@ def index():
 
         # Collect gutter information (optional)
         gutter_features = request.form.getlist('gutter_features') or []
+        raw_has_grating = request.form.get('has_grating')
+        # Only record a value when the checkbox is actually checked; otherwise treat as blank
+        has_grating = 'Yes' if raw_has_grating == 'yes' else ''
+
         gutter_data = {
             'inlet_count': request.form.get('inlet_count', ''),
             'inlet_size': request.form.get('inlet_size', ''),
             'drawing_number': request.form.get('drawing_number', ''),
             'gutter_option': request.form.get('gutter_option', ''),
-            'has_grating': 'Yes' if request.form.get('has_grating') == 'yes' else 'No',
+            'has_grating': has_grating,
             'gutter_features': gutter_features,
             'gutter_features_text': ", ".join(gutter_features) if gutter_features else ''
         }
+
+        # If all gutter fields are effectively empty, disable gutter_data entirely
+        if not any(gutter_data.get(k) for k in [
+            'inlet_count',
+            'inlet_size',
+            'drawing_number',
+            'gutter_option',
+            'has_grating',
+            'gutter_features_text',
+        ]):
+            gutter_data = None
 
         sales_order = request.files['sales_order']
         ot_file = request.files.get('ot_file')
@@ -203,7 +218,7 @@ def index():
         logger.info(f"Matched maintenance docs: {[os.path.basename(d) for d in maintenance_docs]}")
 
         # If any gutter data provided, ensure gutter_care.pdf is filled with those fields
-        if any(gutter_data.get(k) for k in [
+        if gutter_data and any(gutter_data.get(k) for k in [
             'inlet_count',
             'inlet_size',
             'drawing_number',
