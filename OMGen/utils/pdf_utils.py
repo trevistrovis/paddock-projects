@@ -162,10 +162,14 @@ def get_associated_documents(equipment_type, template_dir):
         ],
         "evacuator": [
             "Install EvacWall-Mount Sys.pdf",
-            "DD+E Install Manual.pdf",
+            "deck_drain_evacuator.pdf",
             "Gutter Evac Manual.pdf",
             "Install EvacPVC Bench Sys.pdf",
-            "Installation Manual for the Paddock Evacuator 7-24 Rev03.pdf"
+            "Installation Manual for the Paddock Evacuator 7-24 Rev03.pdf",
+            "bench_evacuator.pdf"
+        ],
+        "deck drain": [
+            "deck_drain_instructions.pdf"
         ]
     }
     
