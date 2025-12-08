@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="/static/style.css">
+    <title>Search History</title>
+</head>
+<body>
+    <div class="container">
+        <div class="header d-flex justify-content-between align-items-center my-4">
+            <h1>Search History</h1>
+            <a href="/" class="btn btn-primary">Home</a>
+        </div>
+
+        {% for project_name, data in grouped_results.items() %}
+        <div class="project-section">
+            <div class="project-header" onclick="toggleSection(this, 'project')">
+                <h2>{{ project_name }}</h2>
+                <div class="d-flex align-items-center">
+                    <span class="result-count me-3">{{ data.count }} results</span>
+                    <button class="btn btn-danger btn-sm" onclick="event.stopPropagation(); deleteProjectSearches('{{ project_name }}')">
+                        Delete All
+                    </button>
+                </div>
+            </div>
+            <div class="project-content">
+                {% for keyword, results in data.keywords.items() %}
+                <div class="keyword-section">
+                    <div class="keyword-header" onclick="toggleSection(this, 'keyword')">
+                        <h3>Keyword: {{ keyword }}</h3>
+                        <span class="result-count">{{ results|length }} results</span>
+                    </div>
+                    <div class="keyword-content">
+                        <table class="table">
+                            <thead>
+                                <tr>
+                                    <th>Page Number</th>
+                                    <th>Snippet</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for row in results %}
+                                <tr id="row-{{row.id}}">
+                                    <td>{{ row.page_number }}</td>
+                                    <td>{{ row.snippet }}</td>
+                                    <td>
+                                        <div class="btn-group">
+                                            <form action="/uploads/{{ row.file_name }}#page={{ row.page_number }}" method="get" target="_blank" class="me-2">
+                                                <button type="submit" class="btn btn-primary btn-sm">View Page</button>
+                                            </form>
+                                            <button class="btn btn-danger btn-sm" onclick="deleteSearch('{{row.id}}')">Delete</button>
+                                        </div>
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <script>
+        function toggleSection(header, type) {
+            event.stopPropagation();
+            const content = header.nextElementSibling;
+            content.classList.toggle('active');
+            
+            // If opening a project section, open its first keyword
+            if (type === 'project' && content.classList.contains('active')) {
+                const firstKeyword = content.querySelector('.keyword-content');
+                if (firstKeyword) {
+                    firstKeyword.classList.add('active');
+                }
+            }
+        }
+
+        // // Open the first project and its first keyword by default
+        // document.addEventListener('DOMContentLoaded', function() {
+        //     const firstProject = document.querySelector('.project-content');
+        //     if (firstProject) {
+        //         firstProject.classList.add('active');
+        //         const firstKeyword = firstProject.querySelector('.keyword-content');
+        //         if (firstKeyword) {
+        //             firstKeyword.classList.add('active');
+        //         }
+        //     }
+        // });
+
+        function deleteSearch(id) {
+            if (confirm('Delete this search?')) {
+                fetch('/delete/' + id, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                })
+                .then(response => {
+                    if (response.ok) {
+                        const row = document.getElementById('row-' + id);
+                        const table = row.closest('table');
+                        row.remove();
+                        
+                        // If no more rows in table, remove the keyword section
+                        if (table.getElementsByTagName('tr').length <= 1) {
+                            const keywordSection = table.closest('.keyword-section');
+                            keywordSection.remove();
+                            
+                            // If no more keywords, remove the project section
+                            const projectContent = keywordSection.parentElement;
+                            if (!projectContent.querySelector('.keyword-section')) {
+                                projectContent.parentElement.remove();
+                            }
+                        }
+                    }
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                    alert('Error deleting search');
+                });
+            }
+        }
+
+        function deleteProjectSearches(projectName) {
+            if (confirm('Delete all searches for this project?')) {
+                fetch(`/delete_project_searches/${projectName}`, {
+                    method: 'POST'
+                })
+                .then(response => {
+                    if (response.ok) {
+                        location.reload();
+                    }
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                    alert('Error deleting project searches');
+                });
+            }
+        }
+    </script>
+</body>
+</html>

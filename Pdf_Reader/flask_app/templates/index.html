@@ -1,0 +1,353 @@
+<!-- <!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="/static/style.css">
+    <title>Spec Search</title>
+</head>
+<body>
+
+    <div class = "header">
+    <h1>Specification Search Engine</h1>
+
+        <div class="logo">
+            <img src="{{ url_for('static', filename='images/paddocklogo.png') }}" alt="Paddock Logo" class="logoimg">
+        </div>
+    <h1>Welcome {{ username }}! <a href="/logout"><button>logout</button></a></h1>
+    </div>
+    {% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}
+        <ul class="flashes">
+            {% for category, message in messages %}
+                <li class="flash {{ category }}">{{ message }}</li>
+            {% endfor %}
+        </ul>
+    {% endif %} -->
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Spec Search</title>
+        <!-- Add Bootstrap for modern components -->
+        <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+        <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.7.2/font/bootstrap-icons.css" rel="stylesheet">
+        <link rel="stylesheet" href="/static/style.css">
+    </head>
+    <body class="bg-light">
+        <!-- Navigation bar -->
+        <nav class="navbar navbar-expand-lg">
+            <div class="container-fluid">
+                <div class="navbar-brand">
+                    <img src="{{ url_for('static', filename='images/paddocklogo.png') }}" alt="Paddock Logo" class="logo-img">
+                </div>
+                <div class="d-flex align-items-center">
+                    <span class="me-3">Welcome {{ username }}!</span>
+                    <a href="/logout" class="btn btn-outline-primary">Logout</a>
+                </div>
+            </div>
+        </nav>
+    
+        <!-- Flash Messages -->
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+                <div class="container mt-3">
+                    {% for category, message in messages %}
+                        <div class="alert alert-{{ category }} alert-dismissible fade show" role="alert">
+                            {{ message }}
+                            <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+                        </div>
+                    {% endfor %}
+                </div>
+            {% endif %}
+        {% endwith %}
+    
+        <main class="container mt-4">
+            <!-- Upload and Search Section -->
+            <div class="row">
+                <section class="col-md-6">
+                    <div class="card shadow-sm">
+                        <div class="card-body">
+                            <h2 class="card-title mb-4">Upload Specification</h2>
+                            <form action="/" method="post" enctype="multipart/form-data">
+                                <div class="mb-3">
+                                    <label for="project_name" class="form-label">Project Name</label>
+                                    <input type="text" class="form-control" name="project_name" id="project_name" 
+                                           placeholder="Enter Project Name">
+                                </div>
+                                <div class="mb-3">
+                                    <label for="pdf_file" class="form-label">Select Spec</label>
+                                    <input type="file" class="form-control" name="pdf_file" id="pdf_file" required>
+                                </div>
+                                <div class="mb-3">
+                                    <label for="keywords" class="form-label">Keywords</label>
+                                    <input type="text" class="form-control" name="keywords" id="keywords" 
+                                           placeholder="Enter keywords separated by commas (e.g., pool, filter, pump)">
+                                    <div class="form-text text-muted">
+                                        Enter multiple keywords separated by commas to search for multiple terms
+                                    </div>
+                                </div>
+                                <div class="form-group">
+                                    <label for="keyword_group">Keyword Group (optional):</label>
+                                    <select class="form-control" id="keyword_group" name="keyword_group">
+                                        <option value="">None</option>
+                                        {% for group in groups %}
+                                        <option value="{{ group.id }}">{{ group.name }}</option>
+                                        {% endfor %}
+                                    </select>
+                                </div>
+                                <button type="submit" class="btn btn-primary w-100">Search</button>
+                            </form>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Uploaded Documents Section -->
+                <section class="col-md-6">
+                    <div class="card shadow-sm">
+                        <div class="card-body">
+                            <h2 class="card-title mb-4">Uploaded Documents</h2>
+                            <p>Click on a document to select it for searching.</p>
+                            {% if uploaded_files %}
+                                <ul class="list-group">
+                                    {% for file in uploaded_files %}
+                                        <li class="list-group-item list-group-item-action document-item" 
+                                            style="cursor: pointer;"
+                                            data-filename="{{ file }}"
+                                            onclick="selectDocument(this)">
+                                            <i class="bi bi-file-pdf me-2"></i>{{ file }}
+                                        </li>
+                                    {% endfor %}
+                                </ul>
+                            {% else %}
+                                <p class="text-muted">No documents uploaded yet.</p>
+                            {% endif %}
+                        </div>
+                    </div>
+                    <div class="mt-4">
+                        <a href="/history" class="btn btn-primary">History</a>
+                        <a href="/keyword_groups" class="btn btn-primary">Keyword Groups</a>
+                    </div>
+                </section>
+            </div>
+
+            <!-- Search Results Section -->
+            {% if file_name or results %}
+            <section class="row mt-4">
+                <div class="col-12">
+                    <div class="card shadow-sm">
+                        <div class="card-body">
+                            {% if file_name %}
+                                <h2 class="card-title mb-4">Project Specs: {{file_name}}</h2>
+                            {% endif %}
+                            {% if results %}
+                                <h3 class="mt-4 mb-4">Search Results For "{{keywords}}" in {{file_name}}</h3>
+                                <form action="/save" method="post">
+                                    <input type="hidden" name="file_name" value="{{file_name}}">
+                                    
+                                    {# First, organize results by keyword #}
+                                    {% set keyword_results = {} %}
+                                    {% for page, entries in results.items() %}
+                                        {% for keyword, snippet in entries %}
+                                            {% if keyword not in keyword_results %}
+                                                {% set _ = keyword_results.update({keyword: []}) %}
+                                            {% endif %}
+                                            {% set _ = keyword_results[keyword].append({'page': page, 'snippet': snippet}) %}
+                                        {% endfor %}
+                                    {% endfor %}
+
+                                    {# Display results grouped by keyword #}
+                                    {% for keyword, entries in keyword_results.items() %}
+                                    <div class="keyword-section mb-4">
+                                        <div class="keyword-header bg-light p-3 rounded d-flex justify-content-between align-items-center" 
+                                             onclick="toggleKeywordSection(this)" style="cursor: pointer;">
+                                            <h4 class="mb-0">Keyword: {{ keyword }}</h4>
+                                            <span class="badge bg-primary">{{ entries|length }} results</span>
+                                        </div>
+                                        <div class="keyword-content mt-3">
+                                            <div class="table-responsive">
+                                                <table class="table table-hover">
+                                                    <thead class="table-light">
+                                                        <tr>
+                                                            <th>Page</th>
+                                                            <th>Snippet</th>
+                                                        </tr>
+                                                    </thead>
+                                                    <tbody>
+                                                        {% for entry in entries %}
+                                                            <tr>
+                                                                <td>
+                                                                    <a href="/uploads/{{ file_name }}#page={{ entry.page.split(' ')[1] }}" 
+                                                                       target="_blank" class="btn btn-outline-primary btn-sm">
+                                                                        {{entry.page}}
+                                                                    </a>
+                                                                </td>
+                                                                <td>{{entry.snippet}}</td>
+                                                                <input type="hidden" name="keyword" value="{{keyword}}">
+                                                                <input type="hidden" name="page_number" value="{{entry.page.split(' ')[1]}}">
+                                                                <input type="hidden" name="snippet" value="{{entry.snippet}}">
+                                                            </tr>
+                                                        {% endfor %}
+                                                    </tbody>
+                                                </table>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    {% endfor %}
+                                    
+                                    <div class="mt-3">
+                                        <button type="submit" class="btn btn-success">Save Search</button>
+                                    </div>
+                                </form>
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+            </section>
+            {% endif %}
+        </main>
+    
+        <!-- Bootstrap JavaScript -->
+        <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+        <script>
+            function selectDocument(element) {
+                const filename = element.getAttribute('data-filename');
+                const fileInput = document.getElementById('pdf_file');
+                const fileLabel = document.querySelector('label[for="pdf_file"]');
+                
+                // Check if this item is already active
+                if (element.classList.contains('active')) {
+                    // Deselect the item
+                    element.classList.remove('active');
+                    
+                    // Restore the original file input
+                    const newFileInput = document.createElement('input');
+                    newFileInput.type = 'file';
+                    newFileInput.className = 'form-control';
+                    newFileInput.id = 'pdf_file';
+                    newFileInput.name = 'pdf_file';
+                    newFileInput.required = true;
+                    
+                    // Replace the hidden input with the file input
+                    const hiddenInput = document.querySelector('input[name="selected_file"]');
+                    if (hiddenInput) {
+                        hiddenInput.parentNode.insertBefore(newFileInput, hiddenInput);
+                        hiddenInput.parentNode.removeChild(hiddenInput);
+                    }
+                    
+                    // Reset the label
+                    fileLabel.textContent = 'Select Spec';
+                } else {
+                    // Remove active class from all items
+                    document.querySelectorAll('.document-item').forEach(item => {
+                        item.classList.remove('active');
+                    });
+                    
+                    // Add active class to selected item
+                    element.classList.add('active');
+                    
+                    // Create a new file input to replace the old one
+                    const newFileInput = document.createElement('input');
+                    newFileInput.type = 'hidden';
+                    newFileInput.name = 'selected_file';
+                    newFileInput.value = filename;
+                    
+                    // Replace any existing input (file or hidden) with the new hidden input
+                    const existingInput = document.querySelector('input[name="pdf_file"], input[name="selected_file"]');
+                    if (existingInput) {
+                        existingInput.parentNode.insertBefore(newFileInput, existingInput);
+                        existingInput.parentNode.removeChild(existingInput);
+                    }
+                    
+                    // Update the UI to show selected file
+                    fileLabel.textContent = 'Selected Spec: ' + filename;
+                }
+            }
+        </script>
+        <script>
+            function toggleKeywordSection(header) {
+                const content = header.nextElementSibling;
+                content.style.display = content.style.display === 'none' ? 'block' : 'none';
+                header.classList.toggle('active');
+            }
+
+            // Initialize keyword sections
+            document.addEventListener('DOMContentLoaded', function() {
+                const keywordSections = document.querySelectorAll('.keyword-content');
+                keywordSections.forEach(section => {
+                    section.style.display = 'block';  // Show all sections by default
+                });
+            });
+        </script>
+    </body>
+    </html>
+    {% endwith %}
+    <!-- <div class = "first">
+        <form action="/" method = "post" enctype="multipart/form-data">
+            <label for="project_name">Project Name: </label>
+            <input type="text" name="project_name" id="project_name" placeholder="Enter Project Name">
+            <br><br>
+            <label for="pdf_file">Select Spec: </label>
+            <input type="file" name="pdf_file" id="pdf_file" required>
+            <br><br>
+            <label for="keywords">Enter Keywords:</label>
+            <input type="text" name="keywords" id="keywords" placeholder="Enter Keywords">
+            <br><br>
+            <button type="submit">Search</button>
+        </form>
+    </div>
+    <div class = "uploads">
+        <h2>Uploaded Documents</h2>
+        <ul>
+            {% for file in uploaded_documents %}
+                <li>
+                    <form action="/" method="post" style="display:inline;">
+                        <input type="hidden" name="document" value="{{file}}">
+                        <button type="submit" class="document-link">{{file}}</button>
+                    </form>
+                    <a href="/uploads/{{file}}" target="_blank" class="external-link">(Open)</a>
+                    <form action="{{ url_for('delete_file', filename=file) }}" method="post" style="display:inline;" onsubmit="return confirm('Are you sure you want to delete this file?');">
+                        <button type="submit" class="delete-link">Delete</button>
+                    </form>
+                </li>
+            {% endfor %}
+        </ul>
+    </div>
+    <div class = "uploads">
+        <h2>Uploaded Documents</h2>
+        <ul>
+            {% for file in uploaded_documents %}
+                <li><a href="/uploads/{{file}}" target="_blank">{{file}}</a></li>
+            {% endfor %}
+        </ul>
+    </div> -->
+    <!-- <div class = "second">
+        {% if file_name %}
+            <h2>Project Specs: {{file_name}}</h2>
+        {% endif %}
+        {% if results, file_name %}
+            <h2>Search Results For {{keywords}} in {{file_name}}</h2>
+            <form action="/save" method="post">
+                <input type="hidden" name="file_name" value="{{file_name}}">
+                {% for page, entries in results.items() %}
+                <a href="/uploads/{{ file_name }}#page={{ page.split(' ')[1] }}" target="_blank"><button>{{page}}</button></a>
+                    <ul>
+                        {% for keyword, snippet in entries %}
+                            <li>
+                                <strong>{{keyword}}</strong> <br><br> {{snippet}}
+                                <input type="hidden" name="keyword" value="{{keyword}}">
+                                <input type="hidden" name="page_number" value="{{page.split(' ')[1]}}">
+                                <input type="hidden" name="snippet" value="{{snippet}}">
+                            </li>
+                        {% endfor %}
+                    </ul>
+                {% endfor %}
+                <button type="submit">Save Search</button>
+            </form>
+        {% endif %}
+    <a href="/history"><button>Search History</button></a>
+    </div>
+
+</body>
+</html>
