@@ -66,7 +66,7 @@ UPLOAD_FOLDER = get_upload_folder()
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 
 # MySQL Database Configuration
-app.config['SQLALCHEMY_DATABASE_URI'] = 'mysql://root:@127.0.0.1/pdf_search'
+app.config['SQLALCHEMY_DATABASE_URI'] = 'mysql://root:root@localhost/pdf_search'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 # Initialize extensions
@@ -478,6 +478,6 @@ def logout():
 
 if __name__ == "__main__":
     # Open the default web browser
-    webbrowser.open('http://localhost:5000')
+    webbrowser.open('http://localhost:8000')
     # Run the Flask app
     app.run(host="0.0.0.0", port=8000, debug=False)
