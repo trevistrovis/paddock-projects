@@ -12,6 +12,9 @@ import webbrowser
 from pathlib import Path
 import pymysql
 from sqlalchemy import text
+from dotenv import load_dotenv
+
+load_dotenv()
 
 pymysql.install_as_MySQLdb()
 
@@ -66,7 +69,7 @@ UPLOAD_FOLDER = get_upload_folder()
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 
 # MySQL Database Configuration
-app.config['SQLALCHEMY_DATABASE_URI'] = 'mysql://root:root@localhost/pdf_search'
+app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('DB_URL')
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 # Initialize extensions
@@ -478,6 +481,6 @@ def logout():
 
 if __name__ == "__main__":
     # Open the default web browser
-    webbrowser.open('http://localhost:8000')
+    webbrowser.open('http://APP_HOST:APP_PORT')
     # Run the Flask app
     app.run(host="0.0.0.0", port=8000, debug=False)
