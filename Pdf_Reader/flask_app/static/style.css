@@ -68,6 +68,12 @@ body {
     border-radius: 8px !important;
 }
 
+.uploaded-documents-scroll {
+    max-height: 420px;
+    overflow-y: auto;
+    padding-right: 0.25rem;
+}
+
 .alert {
     border-radius: 8px;
     margin-bottom: 1rem;

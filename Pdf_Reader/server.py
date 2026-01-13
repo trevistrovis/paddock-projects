@@ -11,7 +11,7 @@ import sys
 import webbrowser
 from pathlib import Path
 import pymysql
-from sqlalchemy import text
+from sqlalchemy import text, func
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -230,19 +230,6 @@ def home():
             # Remove duplicates and empty strings from keywords
             keywords = list(set(filter(None, [k.strip() for k in keywords])))
             results = search_keywords_in_pdf(pdf_path, keywords)
-            
-            # Save search results with group information
-            for page, page_results in results.items():
-                for keyword, snippet in page_results:
-                    search = Search(
-                        file_name=file_name,
-                        keyword=keyword,
-                        page_number=int(page.split()[1]),
-                        snippet=snippet,
-                        group_id=group_id if group_id else None
-                    )
-                    db.session.add(search)
-            db.session.commit()
         
         else:
             # Handle new file upload
@@ -257,19 +244,6 @@ def home():
                 # Remove duplicates and empty strings
                 keywords = list(set(filter(None, [k.strip() for k in keywords])))
                 results = search_keywords_in_pdf(pdf_path, keywords)
-                
-                # Save search results with group information
-                for page, page_results in results.items():
-                    for keyword, snippet in page_results:
-                        search = Search(
-                            file_name=file_name,
-                            keyword=keyword,
-                            page_number=int(page.split()[1]),
-                            snippet=snippet,
-                            group_id=group_id if group_id else None
-                        )
-                        db.session.add(search)
-                db.session.commit()
     
     return render_template('index.html', 
                          results=results, 
@@ -332,8 +306,42 @@ def save():
     page_number = request.form.getlist("page_number")
     snippet = request.form.getlist("snippet")
 
+    seen = set()
     for i in range(len(keyword)):
-        save_search_to_database(file_name, keyword[i], int(page_number[i]), snippet[i])
+        try:
+            page_num = int(page_number[i])
+        except Exception:
+            page_num = None
+        dedupe_key = (
+            (file_name or "").strip().lower(),
+            (keyword[i] or "").strip().lower(),
+            page_num,
+            (snippet[i] or "").strip().lower(),
+        )
+        if dedupe_key in seen:
+            continue
+        seen.add(dedupe_key)
+
+        if page_num is None:
+            continue
+
+        # Prevent saving duplicates that already exist in the database
+        norm_file = (file_name or "").strip().lower()
+        norm_kw = (keyword[i] or "").strip().lower()
+        norm_snip = (snippet[i] or "").strip().lower()
+        existing = (
+            db.session.query(Search.id)
+            .filter(
+                func.lower(Search.file_name) == norm_file,
+                func.lower(Search.keyword) == norm_kw,
+                Search.page_number == page_num,
+                func.lower(Search.snippet) == norm_snip,
+            )
+            .first()
+        )
+        if existing is not None:
+            continue
+        save_search_to_database(file_name, keyword[i], page_num, snippet[i])
     return redirect('/history')
 
 @app.route ('/history')
@@ -344,6 +352,7 @@ def history():
     
     # Group results by project name first, then by keyword
     grouped_results = {}
+    seen = set()
     for result in all_results:
         project_name = result.file_name
         if project_name not in grouped_results:
@@ -355,7 +364,17 @@ def history():
         keyword = result.keyword
         if keyword not in grouped_results[project_name]['keywords']:
             grouped_results[project_name]['keywords'][keyword] = []
-        
+
+        dedupe_key = (
+            (result.file_name or "").strip().lower(),
+            (result.keyword or "").strip().lower(),
+            int(result.page_number) if result.page_number is not None else None,
+            (result.snippet or "").strip().lower(),
+        )
+        if dedupe_key in seen:
+            continue
+        seen.add(dedupe_key)
+
         grouped_results[project_name]['keywords'][keyword].append(result.__dict__)
         grouped_results[project_name]['count'] += 1
 
@@ -481,6 +500,6 @@ def logout():
 
 if __name__ == "__main__":
     # Open the default web browser
-    webbrowser.open('http://APP_HOST:APP_PORT')
+    webbrowser.open('http://APP_HOST:APP_PORT/')
     # Run the Flask app
     app.run(host="0.0.0.0", port=8000, debug=False)

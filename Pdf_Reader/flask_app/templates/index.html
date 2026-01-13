@@ -110,7 +110,21 @@
                             <h2 class="card-title mb-4">Uploaded Documents</h2>
                             <p>Click on a document to select it for searching.</p>
                             {% if uploaded_files %}
-                                <ul class="list-group">
+                                <div class="d-flex align-items-center justify-content-between mb-2">
+                                    <div class="d-flex align-items-center gap-2">
+                                        <label for="uploadedPageSize" class="form-label mb-0">Show</label>
+                                        <select id="uploadedPageSize" class="form-select form-select-sm" style="width: auto;">
+                                            <option value="5">5</option>
+                                            <option value="10" selected>10</option>
+                                            <option value="25">25</option>
+                                            <option value="50">50</option>
+                                        </select>
+                                    </div>
+                                    <button type="button" id="uploadedShowMore" class="btn btn-outline-primary btn-sm">Show more</button>
+                                </div>
+
+                                <div id="uploadedDocumentsScroll" class="uploaded-documents-scroll">
+                                    <ul id="uploadedDocumentsList" class="list-group">
                                     {% for file in uploaded_files %}
                                         <li class="list-group-item list-group-item-action document-item" 
                                             style="cursor: pointer;"
@@ -119,7 +133,8 @@
                                             <i class="bi bi-file-pdf me-2"></i>{{ file }}
                                         </li>
                                     {% endfor %}
-                                </ul>
+                                    </ul>
+                                </div>
                             {% else %}
                                 <p class="text-muted">No documents uploaded yet.</p>
                             {% endif %}
@@ -264,6 +279,48 @@
                     fileLabel.textContent = 'Selected Spec: ' + filename;
                 }
             }
+        </script>
+        <script>
+            document.addEventListener('DOMContentLoaded', function() {
+                const list = document.getElementById('uploadedDocumentsList');
+                const pageSizeSelect = document.getElementById('uploadedPageSize');
+                const showMoreButton = document.getElementById('uploadedShowMore');
+
+                if (!list || !pageSizeSelect || !showMoreButton) {
+                    return;
+                }
+
+                const items = Array.from(list.querySelectorAll('.document-item'));
+                let visibleCount = 0;
+
+                function updateVisibility() {
+                    const pageSize = Number.parseInt(pageSizeSelect.value, 10) || 10;
+
+                    items.forEach((item, idx) => {
+                        item.style.display = idx < visibleCount ? '' : 'none';
+                    });
+
+                    showMoreButton.style.display = visibleCount < items.length ? '' : 'none';
+                }
+
+                function reset() {
+                    const pageSize = Number.parseInt(pageSizeSelect.value, 10) || 10;
+                    visibleCount = Math.min(pageSize, items.length);
+                    updateVisibility();
+                }
+
+                showMoreButton.addEventListener('click', function() {
+                    const pageSize = Number.parseInt(pageSizeSelect.value, 10) || 10;
+                    visibleCount = Math.min(visibleCount + pageSize, items.length);
+                    updateVisibility();
+                });
+
+                pageSizeSelect.addEventListener('change', function() {
+                    reset();
+                });
+
+                reset();
+            });
         </script>
         <script>
             function toggleKeywordSection(header) {
