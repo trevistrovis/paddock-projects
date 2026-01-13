@@ -1,4 +1,4 @@
-Pdf_Reader/flask_app/uploads/
-Pdf_Reader/flask_app/uploads/*.pdf
+flask_app/uploads/
+flask_app/uploads/*.pdf
 app_launcher.py
 .env
