@@ -343,16 +343,32 @@ def healthcheck() -> Dict[str, Any]:
 
 
 @app.post("/monday/webhook")
-async def monday_webhook(request: Request):
-    raw_body = await request.body()
-    print("RAW BODY:", raw_body.decode("utf-8", errors="replace"))
+async def monday_webhook(request: Request, background_tasks: BackgroundTasks):
+    raw = await request.body()
+    print("RAW BODY:", raw.decode("utf-8", errors="replace"))
 
-    # Parse exactly what Monday sent
-    payload = json.loads(raw_body.decode("utf-8") or "{}")
+    payload = json.loads(raw.decode("utf-8") or "{}")
 
-    # Challenge handshake: echo it back exactly
+    # Monday verification handshake
     if "challenge" in payload:
-        return JSONResponse(content=payload, status_code=200)
+        return Response(
+            content=raw,
+            media_type="application/json",
+            status_code=200,
+        )
 
-    # Temporary success for non-challenge events while testing
-    return JSONResponse(content={"ok": True}, status_code=200)
+    item_id = extract_item_id_from_webhook(payload)
+    print(f"[WEBHOOK] Extracted item_id: {item_id}")
+
+    if not item_id:
+        return JSONResponse(
+            status_code=400,
+            content={"ok": False, "error": "Could not determine item ID from webhook payload"},
+        )
+
+    background_tasks.add_task(process_request_item, item_id)
+
+    return JSONResponse(
+        status_code=200,
+        content={"ok": True, "message": f"Processing item {item_id}"},
+    )
