@@ -345,10 +345,11 @@ def healthcheck() -> Dict[str, Any]:
 @app.post("/monday/webhook")
 async def monday_webhook(request: Request, background_tasks: BackgroundTasks):
     payload = await request.json()
+    print("WEBHOOK PAYLOAD:", payload)
 
-    # Monday webhook challenge handshake support
+    # Monday challenge handshake
     if "challenge" in payload:
-        return JSONResponse(content={"challenge": payload["challenge"]})
+        return JSONResponse(status_code=200, content={"challenge": payload["challenge"]})
 
     item_id = extract_item_id_from_webhook(payload)
     if not item_id:
@@ -358,8 +359,4 @@ async def monday_webhook(request: Request, background_tasks: BackgroundTasks):
         )
 
     background_tasks.add_task(process_request_item, item_id)
-
-    return {
-        "ok": True,
-        "message": f"Processing item {item_id}",
-    }
+    return JSONResponse(status_code=200, content={"ok": True})
