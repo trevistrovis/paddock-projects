@@ -10,6 +10,10 @@ import json
 from datetime import datetime
 from pathlib import Path
 import hashlib
+from concurrent.futures import ThreadPoolExecutor
+
+last_duplicate_candidates = []
+verify_thread = None
 
 class FileIndex:
     def __init__(self):
@@ -46,59 +50,49 @@ class FileIndex:
     def update_index(self, base_dir, progress_callback=None):
         self.indexing = True
         try:
-            new_index = {}
-            processed = 0
+            base_dir_norm = os.path.normpath(base_dir)
             scanned = 0
-            total_files = 0
-            
-            # Use a list to collect all files first
-            all_files = []
-            for root, _, files in os.walk(base_dir):
+            updated = 0
+
+            # Incremental indexing (A2): update/insert entries under base_dir.
+            # Do not remove missing files from index.
+            for root, _, files in os.walk(base_dir_norm):
+                if not self.indexing:
+                    return
                 for file in files:
-                    if not self.indexing:  # Check if indexing was cancelled
+                    if not self.indexing:
                         return
+
                     filepath = os.path.normpath(os.path.join(root, file))
-                    all_files.append(filepath)
                     scanned += 1
-                    # Emit occasional progress during directory scan (before total is known)
                     if progress_callback and scanned % 1000 == 0:
                         progress_callback(-1, scanned, 0)
-            
-            total_files = len(all_files)
-            print(f"Found {total_files} files to index")
-            
-            # Now process each file
-            for filepath in all_files:
-                if not self.indexing:  # Check if indexing was cancelled
-                    return
-                
-                try:
-                    stat = os.stat(filepath)
-                    filename = os.path.basename(filepath)
-                    new_index[filepath] = {
-                        'name': filename.lower(),
-                        'path': filepath,
-                        'parent': os.path.dirname(filepath),
-                        'size': stat.st_size,
-                        'modified': stat.st_mtime
-                    }
-                except Exception as e:
-                    print(f"Error indexing {filepath}: {e}")
-                    continue
-                
-                processed += 1
-                if progress_callback and processed % 100 == 0:  # Update every 100 files
-                    progress = (processed / total_files) * 100
-                    progress_callback(progress, processed, total_files)
-            
-            # Final progress update
+
+                    try:
+                        stat = os.stat(filepath)
+                        existing = self.index.get(filepath)
+                        if existing and existing.get('size') == stat.st_size and existing.get('modified') == stat.st_mtime:
+                            continue
+
+                        filename = os.path.basename(filepath)
+                        self.index[filepath] = {
+                            'name': filename.lower(),
+                            'path': filepath,
+                            'parent': os.path.dirname(filepath),
+                            'size': stat.st_size,
+                            'modified': stat.st_mtime
+                        }
+                        updated += 1
+                    except Exception as e:
+                        print(f"Error indexing {filepath}: {e}")
+                        continue
+
             if progress_callback:
-                progress_callback(100, total_files, total_files)
-            
-            self.index = new_index
+                progress_callback(100, scanned, scanned)
+
             self.last_update = datetime.now()
             self.save_index()
-            print(f"Indexing complete. Added {len(new_index)} files to index")
+            print(f"Indexing complete. Scanned {scanned} files. Updated {updated} entries. Total index size: {len(self.index)}")
         finally:
             self.indexing = False
     
@@ -134,6 +128,30 @@ class FileIndex:
             print(f"Partial hash error for {path}: {e}")
             return None
 
+    def _tail_hash(self, path, nbytes=256 * 1024):
+        h = hashlib.sha256()
+        try:
+            with open(path, 'rb') as f:
+                try:
+                    f.seek(0, os.SEEK_END)
+                    size = f.tell()
+                    if size <= 0:
+                        return None
+                    start = max(0, size - nbytes)
+                    f.seek(start, os.SEEK_SET)
+                except Exception:
+                    # If seek fails (rare), just fall back to reading from start
+                    f.seek(0)
+
+                chunk = f.read(nbytes)
+                if not chunk:
+                    return None
+                h.update(chunk)
+            return h.hexdigest()
+        except Exception as e:
+            print(f"Tail hash error for {path}: {e}")
+            return None
+
     def _full_hash(self, path, chunk_size=1024 * 1024):
         h = hashlib.sha256()
         try:
@@ -147,6 +165,130 @@ class FileIndex:
         except Exception as e:
             print(f"Full hash error for {path}: {e}")
             return None
+
+    def find_likely_duplicates(self, min_size_bytes=1 * 1024 * 1024, progress_callback=None, stop_event=None, base_dir=None, max_workers=6):
+        # Fast scan (B2): group by (size, head_hash, tail_hash) without full hashing
+        size_groups = {}
+        if base_dir:
+            base_dir_norm = os.path.normpath(base_dir)
+            items = [info for info in self.index.values()
+                     if info and os.path.normpath(info.get('path', '')).startswith(base_dir_norm)]
+        else:
+            items = [info for info in self.index.values() if info]
+
+        total = len(items)
+        for i, info in enumerate(items, 1):
+            if stop_event and stop_event.is_set():
+                return []
+            try:
+                size = info.get('size', 0)
+                if size >= min_size_bytes:
+                    size_groups.setdefault(size, []).append(info)
+            except Exception:
+                continue
+            if progress_callback and i % 1000 == 0:
+                progress_callback('Scanning by size', i, total)
+
+        candidates = [info for size, group in size_groups.items() if len(group) > 1 for info in group]
+        total_candidates = len(candidates)
+        if progress_callback:
+            progress_callback('Sampling (head+tail)', 0, total_candidates)
+
+        def sample(info):
+            if stop_event and stop_event.is_set():
+                return None
+            p = info.get('path')
+            if not p:
+                return None
+            head = self._partial_hash(p)
+            tail = self._tail_hash(p)
+            return (info.get('size', 0), head, tail, info)
+
+        sampled_groups = {}
+        processed = 0
+        with ThreadPoolExecutor(max_workers=max_workers) as ex:
+            for result in ex.map(sample, candidates):
+                if stop_event and stop_event.is_set():
+                    return []
+                processed += 1
+                if progress_callback and processed % 200 == 0:
+                    progress_callback('Sampling (head+tail)', processed, total_candidates)
+
+                if not result:
+                    continue
+                size, head, tail, info = result
+                if not head or not tail:
+                    continue
+                key = (size, head, tail)
+                sampled_groups.setdefault(key, []).append(info)
+
+        likely_sets = []
+        for (size, head, tail), group in sampled_groups.items():
+            if len(group) > 1:
+                likely_sets.append({
+                    'hash': f"{head}:{tail}",
+                    'count': len(group),
+                    'size': size,
+                    'files': group,
+                })
+
+        likely_sets.sort(key=lambda g: (-g['count'], -g['size']))
+        return likely_sets
+
+    def verify_duplicate_candidates(self, candidate_sets, progress_callback=None, stop_event=None, max_workers=6):
+        # Full verification only on candidate sets (B2)
+        all_files = []
+        for group in candidate_sets or []:
+            for info in group.get('files', []):
+                p = info.get('path')
+                if p:
+                    all_files.append(info)
+
+        total = len(all_files)
+        if total == 0:
+            return []
+
+        if progress_callback:
+            progress_callback('Full hashing (verify)', 0, total)
+
+        def fullhash(info):
+            if stop_event and stop_event.is_set():
+                return None
+            p = info.get('path')
+            if not p:
+                return None
+            fh = self._full_hash(p)
+            return (fh, info)
+
+        full_groups = {}
+        processed = 0
+        with ThreadPoolExecutor(max_workers=max_workers) as ex:
+            for result in ex.map(fullhash, all_files):
+                if stop_event and stop_event.is_set():
+                    return []
+                processed += 1
+                if progress_callback and processed % 50 == 0:
+                    progress_callback('Full hashing (verify)', processed, total)
+
+                if not result:
+                    continue
+                fh, info = result
+                if not fh:
+                    continue
+                full_groups.setdefault(fh, []).append(info)
+
+        duplicate_sets = []
+        for content_hash, group in full_groups.items():
+            if len(group) > 1:
+                duplicate_sets.append({
+                    'hash': content_hash,
+                    'count': len(group),
+                    'size': group[0].get('size', 0) if group else 0,
+                    'files': group,
+                })
+
+        duplicate_sets.sort(key=lambda g: (-g['count'], -g['size']))
+        return duplicate_sets
 
     def find_duplicates(self, min_size_bytes=1 * 1024 * 1024, progress_callback=None, stop_event=None, base_dir=None):
         # Step 1: group by size (optionally limited to a base directory)
@@ -283,14 +425,41 @@ class DuplicateThread(threading.Thread):
             def progress(stage, current, total):
                 self.queue.put(('dup_progress', (stage, current, total)))
 
-            dup_sets = self.file_index.find_duplicates(
+            dup_sets = self.file_index.find_likely_duplicates(
                 min_size_bytes=self.min_size_bytes,
                 progress_callback=progress,
                 stop_event=self.stop_event,
-                base_dir=self.base_dir
+                base_dir=self.base_dir,
             )
             # Stream groups to UI
             for group in dup_sets:
+                if self.stop_event.is_set():
+                    return
+                self.queue.put(('dup_group', group))
+            self.queue.put(('dup_done', None))
+        except Exception as e:
+            self.queue.put(('error', str(e)))
+
+class VerifyDuplicatesThread(threading.Thread):
+    def __init__(self, file_index, queue, stop_event, candidate_sets):
+        super().__init__()
+        self.file_index = file_index
+        self.queue = queue
+        self.stop_event = stop_event
+        self.candidate_sets = candidate_sets
+
+    def run(self):
+        try:
+            def progress(stage, current, total):
+                self.queue.put(('dup_progress', (stage, current, total)))
+
+            verified_sets = self.file_index.verify_duplicate_candidates(
+                self.candidate_sets,
+                progress_callback=progress,
+                stop_event=self.stop_event,
+            )
+
+            for group in verified_sets:
                 if self.stop_event.is_set():
                     return
                 self.queue.put(('dup_group', group))
@@ -433,13 +602,14 @@ def start_search():
     do_start_search(keyword)
 
 def do_start_search(keyword):
-    global search_results, search_thread, stop_event
+    global search_results, search_thread, stop_event, last_duplicate_candidates
     print(f"Starting search for keyword: {keyword}")
     print(f"Current index size: {len(file_index.index)} files")
     
     for item in results_tree.get_children():
         results_tree.delete(item)
     search_results = []
+    last_duplicate_candidates = []
     
     search_button.config(state=tk.DISABLED)
     cancel_button.config(state=tk.NORMAL)
@@ -534,7 +704,7 @@ def update_indexing_then_search(queue, keyword):
             dup_button.config(state=tk.NORMAL)
 
 def start_duplicate_scan():
-    global search_results, duplicate_thread, stop_event
+    global search_results, duplicate_thread, stop_event, last_duplicate_candidates
     base_dir = directory_path.get().strip()
     if not base_dir or not os.path.isdir(base_dir):
         messagebox.showerror("Invalid Path", "Please select a valid directory first.")
@@ -544,16 +714,18 @@ def start_duplicate_scan():
     for item in results_tree.get_children():
         results_tree.delete(item)
     search_results = []
+    last_duplicate_candidates = []
 
     # UI state
     search_button.config(state=tk.DISABLED)
     dup_button.config(state=tk.DISABLED)
+    verify_button.config(state=tk.DISABLED)
     cancel_button.config(state=tk.NORMAL)
     status_frame.pack(pady=10, fill=tk.X, padx=10)
     status_label.pack(fill=tk.X, padx=5)
     progress_label.pack(fill=tk.X, padx=5)
-    status_label.config(text="Finding duplicates...", fg="blue")
-    progress_label.config(text="Starting duplicate scan (min size 1 MB)...")
+    status_label.config(text="Finding likely duplicates...", fg="blue")
+    progress_label.config(text="Starting fast duplicate scan (min size 1 MB)...")
 
     # Queue and thread
     result_queue = Queue()
@@ -567,6 +739,34 @@ def start_duplicate_scan():
     )
     duplicate_thread.start()
 
+    update_duplicate_results(result_queue)
+
+def start_verify_duplicates():
+    global verify_thread, stop_event, last_duplicate_candidates
+
+    if not last_duplicate_candidates:
+        messagebox.showinfo("Verify Duplicates", "No candidate duplicate groups to verify. Run 'Find Duplicates' first.")
+        return
+
+    # Clear previous results
+    for item in results_tree.get_children():
+        results_tree.delete(item)
+
+    # UI state
+    search_button.config(state=tk.DISABLED)
+    dup_button.config(state=tk.DISABLED)
+    verify_button.config(state=tk.DISABLED)
+    cancel_button.config(state=tk.NORMAL)
+    status_frame.pack(pady=10, fill=tk.X, padx=10)
+    status_label.pack(fill=tk.X, padx=5)
+    progress_label.pack(fill=tk.X, padx=5)
+    status_label.config(text="Verifying duplicates (full hash)...", fg="blue")
+    progress_label.config(text="Starting full verification...")
+
+    result_queue = Queue()
+    stop_event = threading.Event()
+    verify_thread = VerifyDuplicatesThread(file_index, result_queue, stop_event, last_duplicate_candidates)
+    verify_thread.start()
     update_duplicate_results(result_queue)
 
 def update_results(queue):
@@ -589,7 +789,9 @@ def update_results(queue):
             results_tree.insert('', 'end', text=filename,
                                 values=(filepath, filename,
                                         format_size(file_info['size']),
-                                        format_date(file_info['modified'])),
+                                        format_date(file_info['modified']),
+                                        file_info['size'],
+                                        file_info['modified']),
                                 tags=('file',))
 
             status_label.config(text=f"Found {len(search_results)} matches...", fg="green")
@@ -631,26 +833,38 @@ def update_duplicate_results(queue):
         if msg_type == 'dup_progress':
             stage, current, total = data
             progress_label.config(text=f"{stage}: {current:,} of {total:,}")
+
         elif msg_type == 'dup_group':
             group = data
+            # Store candidate sets from fast scan so we can verify later.
+            # Verified scans will overwrite the tree but should not change the stored candidates.
+            if 'last_duplicate_candidates' in globals() and isinstance(group.get('files', []), list):
+                if group.get('hash') and ':' in str(group.get('hash')):
+                    last_duplicate_candidates.append(group)
             # Root item per duplicate group
             group_text = f"{group['count']} duplicates - {format_size(group['size'])} each"
             parent_id = results_tree.insert('', 'end', text=group_text,
-                                            values=(group['hash'], '', '', ''),
+                                            values=(group['hash'], '', '', '', '', ''),
                                             tags=('directory',))
-            # Add files as children
-            for info in sorted(group['files'], key=lambda x: x['path']):
-                filepath = info['path']
-                filename = os.path.basename(filepath)
-                results_tree.insert(parent_id, 'end', text=filename,
-                                    values=(filepath, filename,
+
+            # Children = each file in the group
+            for info in group['files']:
+                fp = info.get('path', '')
+                nm = os.path.basename(fp)
+                results_tree.insert(parent_id, 'end', text=nm,
+                                    values=(fp, nm,
                                             format_size(info.get('size', 0)),
-                                            format_date(info.get('modified', 0))),
+                                            format_date(info.get('modified', 0)),
+                                            info.get('size', 0),
+                                            info.get('modified', 0)),
                                     tags=('file',))
             status_label.config(text="Duplicate groups updating...", fg="green")
+
         elif msg_type == 'dup_done':
             search_button.config(state=tk.NORMAL)
             dup_button.config(state=tk.NORMAL)
+            if 'last_duplicate_candidates' in globals() and last_duplicate_candidates:
+                verify_button.config(state=tk.NORMAL)
             cancel_button.config(state=tk.DISABLED)
             progress_label.config(text="")
             if not results_tree.get_children(''):
@@ -659,8 +873,9 @@ def update_duplicate_results(queue):
                 status_label.config(text="Duplicate scan complete", fg="green")
             finished = True
             break
+
         elif msg_type == 'error':
-            messagebox.showerror("Error", f"An error occurred: {data}")
+            messagebox.showerror("Error", f"An error occurred during duplicate scan: {data}")
             search_button.config(state=tk.NORMAL)
             dup_button.config(state=tk.NORMAL)
             cancel_button.config(state=tk.DISABLED)
@@ -768,10 +983,41 @@ def cancel_search():
         stop_event.set()
         dup_button.config(state=tk.NORMAL)
         cancelled_any = True
+    if 'verify_thread' in globals() and verify_thread and verify_thread.is_alive():
+        stop_event.set()
+        verify_button.config(state=tk.NORMAL)
+        cancelled_any = True
     cancel_button.config(state=tk.DISABLED)
     if cancelled_any:
         status_label.config(text="Operation cancelled", fg="red")
     status_frame.pack_forget()
+
+def sort_treeview(column, reverse):
+    selected = results_tree.selection()
+    parent = results_tree.parent(selected[0]) if selected else ''
+
+    sort_col = column
+    if column == 'size':
+        sort_col = 'size_bytes'
+    elif column == 'modified':
+        sort_col = 'modified_ts'
+
+    items = [(results_tree.set(k, sort_col), k) for k in results_tree.get_children(parent)]
+    numeric_cols = {'size_bytes', 'modified_ts'}
+    if sort_col in numeric_cols:
+        def to_num(v):
+            try:
+                return float(v)
+            except Exception:
+                return 0.0
+        items.sort(key=lambda t: to_num(t[0]), reverse=reverse)
+    else:
+        items.sort(key=lambda t: (t[0] or '').lower(), reverse=reverse)
+
+    for index, (_, k) in enumerate(items):
+        results_tree.move(k, parent, index)
+
+    results_tree.heading(column, command=lambda: sort_treeview(column, not reverse))
 
 # GUI setup
 root = tk.Tk()
@@ -800,6 +1046,8 @@ search_button = tk.Button(button_frame, text="Search", command=start_search, bg=
 search_button.pack(side=tk.LEFT, padx=5)
 dup_button = tk.Button(button_frame, text="Find Duplicates", command=start_duplicate_scan, width=15)
 dup_button.pack(side=tk.LEFT, padx=5)
+verify_button = tk.Button(button_frame, text="Verify Duplicates", command=start_verify_duplicates, width=15, state=tk.DISABLED)
+verify_button.pack(side=tk.LEFT, padx=5)
 cancel_button = tk.Button(button_frame, text="Cancel", command=cancel_search, state=tk.DISABLED, width=15)
 cancel_button.pack(side=tk.LEFT, padx=5)
 
@@ -814,18 +1062,23 @@ results_frame = tk.Frame(main_frame)
 results_frame.pack(expand=True, fill=tk.BOTH, pady=5)
 
 # Create Treeview
-results_tree = ttk.Treeview(results_frame, columns=('path', 'name', 'size', 'modified'),
-                           displaycolumns=('path', 'name', 'size', 'modified'))
-results_tree.heading('path', text='Location')
-results_tree.heading('name', text='Name')
-results_tree.heading('size', text='Size')
-results_tree.heading('modified', text='Modified')
+results_tree = ttk.Treeview(
+    results_frame,
+    columns=('path', 'name', 'size', 'modified', 'size_bytes', 'modified_ts'),
+    displaycolumns=('path', 'name', 'size', 'modified'),
+)
+results_tree.heading('path', text='Location', command=lambda: sort_treeview('path', False))
+results_tree.heading('name', text='Name', command=lambda: sort_treeview('name', False))
+results_tree.heading('size', text='Size', command=lambda: sort_treeview('size', False))
+results_tree.heading('modified', text='Modified', command=lambda: sort_treeview('modified', False))
 
 # Configure column widths
 results_tree.column('path', width=350)
 results_tree.column('name', width=200)
 results_tree.column('size', width=100)
 results_tree.column('modified', width=150)
+results_tree.column('size_bytes', width=0, stretch=False)
+results_tree.column('modified_ts', width=0, stretch=False)
 
 # Configure tags for different row types
 results_tree.tag_configure('directory', foreground='navy')
