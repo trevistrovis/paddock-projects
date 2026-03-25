@@ -54,7 +54,7 @@ COUNTY_DF["State"] = COUNTY_DF["State"].astype(str).str.strip().str.lower()
 COUNTY_DF["County"] = COUNTY_DF["County"].astype(str).str.strip().str.lower()
 COUNTY_DF["FIPS"] = COUNTY_DF["FIPS"].astype(str).str.strip().str.zfill(5)
 
-ZIP_DF = pd.read_csv("zip_to_county.csv", dtype={"Zip": str})
+ZIP_DF = pd.read_csv("zips.csv", dtype={"Zip": str})
 ZIP_DF.columns = [c.strip() for c in ZIP_DF.columns]
 
 ZIP_DF["Zip"] = ZIP_DF["Zip"].astype(str).str.strip().str.zfill(5)
