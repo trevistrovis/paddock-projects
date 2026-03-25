@@ -1,6 +1,8 @@
 import os
 import json
 import requests
+import pandas as pd
+import re
 from typing import Optional, Dict, Any
 
 from fastapi import FastAPI, Request, BackgroundTasks
@@ -36,6 +38,28 @@ REQ_STATUS_RATE_FOUND = "Rate Found"
 REQ_STATUS_REVIEWED = "Reviewed"
 
 RES_STATUS_DONE = "Done"
+
+COUNTY_DF = pd.read_excel(
+    "counties.xlsx",
+    dtype={
+        "State FIPS": str,
+        "County FIPS": str,
+        "FIPS": str,
+    }
+)
+COUNTY_DF.columns = [c.strip() for c in COUNTY_DF.columns]
+COUNTY_DF = COUNTY_DF[COUNTY_DF["County"].notna()].copy()
+
+COUNTY_DF["State"] = COUNTY_DF["State"].astype(str).str.strip().str.lower()
+COUNTY_DF["County"] = COUNTY_DF["County"].astype(str).str.strip().str.lower()
+COUNTY_DF["FIPS"] = COUNTY_DF["FIPS"].astype(str).str.strip().str.zfill(5)
+
+ZIP_DF = pd.read_csv("zip_to_county.csv", dtype={"Zip": str})
+ZIP_DF.columns = [c.strip() for c in ZIP_DF.columns]
+
+ZIP_DF["Zip"] = ZIP_DF["Zip"].astype(str).str.strip().str.zfill(5)
+ZIP_DF["State"] = ZIP_DF["State"].astype(str).str.strip().str.lower()
+ZIP_DF["County"] = ZIP_DF["County"].astype(str).str.strip().str.lower()
 
 
 class MondayClient:
@@ -237,25 +261,32 @@ def extract_item_id_from_webhook(payload: Dict[str, Any]) -> Optional[int]:
 
 
 def resolve_location(city_state_zip: str) -> Dict[str, str]:
-    """
-    TODO: Replace this with real lookup logic.
-    Example output:
-    {
-        "county": "Allegheny County",
-        "fips": "42003"
+    zip_code = extract_zip(city_state_zip)
+
+    zip_row = ZIP_DF[ZIP_DF["Zip"] == zip_code]
+    if zip_row.empty:
+        raise RuntimeError(f"ZIP {zip_code} not found in ZIP lookup file")
+
+    state = zip_row.iloc[0]["State"]
+    county = zip_row.iloc[0]["County"]
+
+    county_row = COUNTY_DF[
+        (COUNTY_DF["State"] == state) &
+        (COUNTY_DF["County"] == county)
+    ]
+
+    if county_row.empty:
+        raise RuntimeError(
+            f"County/FIPS match not found for county='{county}', state='{state}'"
+        )
+
+    matched_county = county_row.iloc[0]["County"]
+    matched_fips = county_row.iloc[0]["FIPS"]
+
+    return {
+        "county": matched_county.title(),
+        "fips": matched_fips,
     }
-    """
-    # Demo mapping
-    lowered = city_state_zip.lower()
-
-    if "pittsburgh" in lowered:
-        return {"county": "Allegheny County", "fips": "42003"}
-    if "buffalo" in lowered:
-        return {"county": "Erie County", "fips": "36029"}
-    if "nashville" in lowered:
-        return {"county": "Davidson County", "fips": "47037"}
-
-    raise RuntimeError(f"Could not resolve county/FIPS for '{city_state_zip}'")
 
 
 def lookup_millwright_wage(fips: str, as_of_date: Optional[str] = None) -> Dict[str, Any]:
@@ -333,6 +364,11 @@ def process_request_item(item_id: int) -> None:
             body=f"Lookup failed: {str(exc)}",
         )
 
+def extract_zip(text: str) -> str:
+    match = re.search(r"\b\d{5}\b", text)
+    if not match:
+        raise RuntimeError(f"No ZIP code found in '{text}'")
+    return match.group(0)
 
 @app.get("/")
 def healthcheck() -> Dict[str, Any]:
@@ -341,6 +377,19 @@ def healthcheck() -> Dict[str, Any]:
         "service": "prevailing-wage-webhook",
     }
 
+@app.get("/test-location")
+def test_location(input: str):
+    try:
+        result = resolve_location(input)
+        return {
+            "input": input,
+            "result": result
+        }
+    except Exception as e:
+        return {
+            "input": input,
+            "error": str(e)
+        }
 
 @app.post("/monday/webhook")
 async def monday_webhook(request: Request, background_tasks: BackgroundTasks):
