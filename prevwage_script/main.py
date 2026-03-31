@@ -61,6 +61,21 @@ ZIP_DF["Zip"] = ZIP_DF["Zip"].astype(str).str.strip().str.zfill(5)
 ZIP_DF["State"] = ZIP_DF["State"].astype(str).str.strip().str.lower()
 ZIP_DF["County"] = ZIP_DF["County"].astype(str).str.strip().str.lower()
 
+WAGES_DF = pd.read_csv("wages.csv")
+WAGES_DF.columns = [c.strip() for c in WAGES_DF.columns]
+WAGES_DF["fips"] = (WAGES_DF["fips"].astype(str).str.replace(".0", "", regex=False).str.strip().str.zfill(5))
+
+WAGES_DF["base_rate"] = WAGES_DF["base_rate"].astype(float)
+WAGES_DF["fringe_rate"] = WAGES_DF["fringe_rate"].astype(float)
+
+WAGES_DF["effective_date"] = pd.to_datetime(WAGES_DF["effective_date"])
+
+# optional
+if "expiration_date" in WAGES_DF.columns:
+    WAGES_DF["expiration_date"] = pd.to_datetime(
+        WAGES_DF["expiration_date"], errors="coerce"
+    )
+
 
 class MondayClient:
     def __init__(self, token: str):
@@ -289,28 +304,29 @@ def resolve_location(city_state_zip: str) -> Dict[str, str]:
 
 
 def lookup_millwright_wage(fips: str, as_of_date: Optional[str] = None) -> Dict[str, Any]:
-    """
-    TODO: Replace this with real wage lookup logic.
-    Example output:
-    {
-        "base_rate": 42.50,
-        "fringe_rate": 18.75,
-        "effective_date": "2026-03-01",
-        "source_note": "Demo lookup"
-    }
-    """
-    demo_rates = {
-        "42003": {"base_rate": 42.50, "fringe_rate": 18.75, "effective_date": "2026-03-01"},
-        "36029": {"base_rate": 46.10, "fringe_rate": 21.40, "effective_date": "2026-03-01"},
-        "47037": {"base_rate": 38.25, "fringe_rate": 16.90, "effective_date": "2026-03-01"},
-    }
+    df = WAGES_DF[WAGES_DF["fips"] == fips]
 
-    if fips not in demo_rates:
-        raise RuntimeError(f"No demo wage found for FIPS {fips}")
+    if df.empty:
+        raise RuntimeError(f"No wage found for FIPS {fips}")
 
-    result = demo_rates[fips].copy()
-    result["source_note"] = f"Demo lookup for FIPS {fips}"
-    return result
+    # Handle date logic
+    if as_of_date:
+        as_of = pd.to_datetime(as_of_date)
+        df = df[df["effective_date"] <= as_of]
+
+        if df.empty:
+            raise RuntimeError(f"No wage found for FIPS {fips} before {as_of_date}")
+
+    # Get most recent rate
+    df = df.sort_values("effective_date", ascending=False)
+    row = df.iloc[0]
+
+    return {
+        "base_rate": row["base_rate"],
+        "fringe_rate": row["fringe_rate"],
+        "effective_date": row["effective_date"].strftime("%Y-%m-%d"),
+        "source_note": f"{row.get('source', '')} {row.get('source_id', '')}".strip(),
+    }
 
 
 def process_request_item(item_id: int) -> None:
