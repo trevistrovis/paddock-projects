@@ -52,7 +52,7 @@ COUNTY_DF = COUNTY_DF[COUNTY_DF["County"].notna()].copy()
 
 COUNTY_DF["State"] = COUNTY_DF["State"].astype(str).str.strip().str.lower()
 COUNTY_DF["County"] = COUNTY_DF["County"].astype(str).str.strip().str.lower()
-COUNTY_DF["FIPS"] = COUNTY_DF["FIPS"].astype(str).str.strip().str.zfill(5)
+COUNTY_DF["FIPS"] = COUNTY_DF["FIPS"].astype(str).str.replace(".0", "", regex=False).str.strip().str.zfill(5)
 
 ZIP_DF = pd.read_csv("zips.csv", dtype={"Zip": str})
 ZIP_DF.columns = [c.strip() for c in ZIP_DF.columns]
@@ -281,8 +281,7 @@ def resolve_location(city_state_zip: str) -> Dict[str, str]:
         )
 
     matched_county = county_row.iloc[0]["County"]
-    matched_fips = county_row.iloc[0]["FIPS"]
-
+    matched_fips = str(county_row.iloc[0]["FIPS"]).replace(".0", "").strip().zfill(5)
     return {
         "county": matched_county.title(),
         "fips": matched_fips,
