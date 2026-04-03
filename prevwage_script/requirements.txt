@@ -1,5 +1,7 @@
 fastapi
 uvicorn
 requests
+mysql-connector-python
+python-dotenv
 pandas
 openpyxl

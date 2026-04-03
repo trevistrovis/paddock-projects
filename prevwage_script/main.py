@@ -1,14 +1,26 @@
 import os
 import json
 import requests
-import pandas as pd
+# import pandas as pd
 import re
+import mysql.connector
 from typing import Optional, Dict, Any
 
 from fastapi import FastAPI, Request, BackgroundTasks
 from fastapi.responses import JSONResponse
 
 app = FastAPI(title="Prevailing Wage Webhook Service")
+
+DB_CONFIG = {
+    "host": os.getenv("DB_HOST"),
+    "port": int(os.getenv("DB_PORT", "3306")),
+    "database": os.getenv("DB_NAME"),
+    "user": os.getenv("DB_USER"),
+    "password": os.getenv("DB_PASSWORD"),
+}
+
+def get_db_conn():
+    return mysql.connector.connect(**DB_CONFIG)
 
 MONDAY_API_TOKEN = os.getenv("MONDAY_API_TOKEN")
 MONDAY_API_URL = "https://api.monday.com/v2"
@@ -39,42 +51,43 @@ REQ_STATUS_REVIEWED = "Reviewed"
 
 RES_STATUS_DONE = "Done"
 
-COUNTY_DF = pd.read_excel(
-    "counties.xlsx",
-    dtype={
-        "State FIPS": str,
-        "County FIPS": str,
-        "FIPS": str,
-    }
-)
-COUNTY_DF.columns = [c.strip() for c in COUNTY_DF.columns]
-COUNTY_DF = COUNTY_DF[COUNTY_DF["County"].notna()].copy()
+#### LOCAL DATA LOADING (commented out for DB approach)
+# COUNTY_DF = pd.read_excel(
+#     "counties.xlsx",
+#     dtype={
+#         "State FIPS": str,
+#         "County FIPS": str,
+#         "FIPS": str,
+#     }
+# )
+# COUNTY_DF.columns = [c.strip() for c in COUNTY_DF.columns]
+# COUNTY_DF = COUNTY_DF[COUNTY_DF["County"].notna()].copy()
 
-COUNTY_DF["State"] = COUNTY_DF["State"].astype(str).str.strip().str.lower()
-COUNTY_DF["County"] = COUNTY_DF["County"].astype(str).str.strip().str.lower()
-COUNTY_DF["FIPS"] = COUNTY_DF["FIPS"].astype(str).str.replace(".0", "", regex=False).str.strip().str.zfill(5)
+# COUNTY_DF["State"] = COUNTY_DF["State"].astype(str).str.strip().str.lower()
+# COUNTY_DF["County"] = COUNTY_DF["County"].astype(str).str.strip().str.lower()
+# COUNTY_DF["FIPS"] = COUNTY_DF["FIPS"].astype(str).str.replace(".0", "", regex=False).str.strip().str.zfill(5)
 
-ZIP_DF = pd.read_csv("zips.csv", dtype={"Zip": str})
-ZIP_DF.columns = [c.strip() for c in ZIP_DF.columns]
+# ZIP_DF = pd.read_csv("zips.csv", dtype={"Zip": str})
+# ZIP_DF.columns = [c.strip() for c in ZIP_DF.columns]
 
-ZIP_DF["Zip"] = ZIP_DF["Zip"].astype(str).str.strip().str.zfill(5)
-ZIP_DF["State"] = ZIP_DF["State"].astype(str).str.strip().str.lower()
-ZIP_DF["County"] = ZIP_DF["County"].astype(str).str.strip().str.lower()
+# ZIP_DF["Zip"] = ZIP_DF["Zip"].astype(str).str.strip().str.zfill(5)
+# ZIP_DF["State"] = ZIP_DF["State"].astype(str).str.strip().str.lower()
+# ZIP_DF["County"] = ZIP_DF["County"].astype(str).str.strip().str.lower()
 
-WAGES_DF = pd.read_csv("wages.csv")
-WAGES_DF.columns = [c.strip() for c in WAGES_DF.columns]
-WAGES_DF["fips"] = (WAGES_DF["fips"].astype(str).str.replace(".0", "", regex=False).str.strip().str.zfill(5))
+# WAGES_DF = pd.read_csv("wages.csv")
+# WAGES_DF.columns = [c.strip() for c in WAGES_DF.columns]
+# WAGES_DF["fips"] = (WAGES_DF["fips"].astype(str).str.replace(".0", "", regex=False).str.strip().str.zfill(5))
 
-WAGES_DF["base_rate"] = WAGES_DF["base_rate"].astype(float)
-WAGES_DF["fringe_rate"] = WAGES_DF["fringe_rate"].astype(float)
+# WAGES_DF["base_rate"] = WAGES_DF["base_rate"].astype(float)
+# WAGES_DF["fringe_rate"] = WAGES_DF["fringe_rate"].astype(float)
 
-WAGES_DF["effective_date"] = pd.to_datetime(WAGES_DF["effective_date"])
+# WAGES_DF["effective_date"] = pd.to_datetime(WAGES_DF["effective_date"])
 
-# optional
-if "expiration_date" in WAGES_DF.columns:
-    WAGES_DF["expiration_date"] = pd.to_datetime(
-        WAGES_DF["expiration_date"], errors="coerce"
-    )
+# # optional
+# if "expiration_date" in WAGES_DF.columns:
+#     WAGES_DF["expiration_date"] = pd.to_datetime(
+#         WAGES_DF["expiration_date"], errors="coerce"
+#     )
 
 
 class MondayClient:
@@ -278,55 +291,87 @@ def extract_item_id_from_webhook(payload: Dict[str, Any]) -> Optional[int]:
 def resolve_location(city_state_zip: str) -> Dict[str, str]:
     zip_code = extract_zip(city_state_zip)
 
-    zip_row = ZIP_DF[ZIP_DF["Zip"] == zip_code]
-    if zip_row.empty:
-        raise RuntimeError(f"ZIP {zip_code} not found in ZIP lookup file")
+    conn = get_db_conn()
+    cur = conn.cursor(dictionary=True)
 
-    state = zip_row.iloc[0]["State"]
-    county = zip_row.iloc[0]["County"]
-
-    county_row = COUNTY_DF[
-        (COUNTY_DF["State"] == state) &
-        (COUNTY_DF["County"] == county)
-    ]
-
-    if county_row.empty:
-        raise RuntimeError(
-            f"County/FIPS match not found for county='{county}', state='{state}'"
+    try:
+        cur.execute(
+            "SELECT state_name, county_name FROM zips WHERE zip = %s",
+            (zip_code,)
         )
+        zip_row = cur.fetchone()
 
-    matched_county = county_row.iloc[0]["County"]
-    matched_fips = str(county_row.iloc[0]["FIPS"]).replace(".0", "").strip().zfill(5)
-    return {
-        "county": matched_county.title(),
-        "fips": matched_fips,
-    }
+        if not zip_row:
+            raise RuntimeError(f"ZIP {zip_code} not found")
+
+        cur.execute(
+            """
+            SELECT fips, county_name
+            FROM counties
+            WHERE state_name = %s AND county_name = %s
+            LIMIT 1
+            """,
+            (zip_row["state_name"], zip_row["county_name"])
+        )
+        county_row = cur.fetchone()
+
+        if not county_row:
+            raise RuntimeError(
+                f"No FIPS match for {zip_row['county_name']}, {zip_row['state_name']}"
+            )
+
+        return {
+            "county": county_row["county_name"],
+            "fips": county_row["fips"],
+        }
+    finally:
+        cur.close()
+        conn.close()
 
 
 def lookup_millwright_wage(fips: str, as_of_date: Optional[str] = None) -> Dict[str, Any]:
-    df = WAGES_DF[WAGES_DF["fips"] == fips]
+    conn = get_db_conn()
+    cur = conn.cursor(dictionary=True)
 
-    if df.empty:
-        raise RuntimeError(f"No wage found for FIPS {fips}")
+    try:
+        if as_of_date:
+            cur.execute(
+                """
+                SELECT *
+                FROM wages
+                WHERE fips = %s
+                  AND effective_date <= %s
+                ORDER BY effective_date DESC
+                LIMIT 1
+                """,
+                (fips, as_of_date)
+            )
+        else:
+            cur.execute(
+                """
+                SELECT *
+                FROM wages
+                WHERE fips = %s
+                ORDER BY effective_date DESC
+                LIMIT 1
+                """,
+                (fips,)
+            )
 
-    # Handle date logic
-    if as_of_date:
-        as_of = pd.to_datetime(as_of_date)
-        df = df[df["effective_date"] <= as_of]
+        row = cur.fetchone()
 
-        if df.empty:
-            raise RuntimeError(f"No wage found for FIPS {fips} before {as_of_date}")
+        if not row:
+            raise RuntimeError(f"No wage found for FIPS {fips}")
 
-    # Get most recent rate
-    df = df.sort_values("effective_date", ascending=False)
-    row = df.iloc[0]
-
-    return {
-        "base_rate": row["base_rate"],
-        "fringe_rate": row["fringe_rate"],
-        "effective_date": row["effective_date"].strftime("%Y-%m-%d"),
-        "source_note": f"{row.get('source', '')} {row.get('source_id', '')}".strip(),
-    }
+        return {
+            "base_rate": float(row["base_rate"]),
+            "fringe_rate": float(row["fringe_rate"]),
+            "effective_date": row["effective_date"].strftime("%Y-%m-%d"),
+            "source_note": "",
+        }
+    finally:
+        cur.close()
+        conn.close()
 
 
 def process_request_item(item_id: int) -> None:
