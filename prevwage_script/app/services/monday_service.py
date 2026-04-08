@@ -8,6 +8,8 @@ from app.config import (
     RESULTS_BOARD_ID,
     REQ_COL_STATUS,
     REQ_COL_NOTES,
+    REQ_COL_CITY_STATE_ZIP,
+    REQ_COL_DATE_NEEDED,
     RES_COL_CITY_STATE_ZIP,
     RES_COL_COUNTY,
     RES_COL_FIPS,
@@ -156,13 +158,13 @@ def extract_column_text(item: Dict[str, Any], column_id: str) -> str:
             return col.get("text") or ""
     return ""
 
-def parse_request_item(item: Dict[str, Any], city_col: str, date_col: str, notes_col: str) -> Dict[str, Any]:
+def parse_request_item(item: Dict[str, Any]) -> Dict[str, Any]:
     return {
         "item_id": int(item["id"]),
         "project_name": item["name"],
-        "city_state_zip": extract_column_text(item, city_col),
-        "date_needed": extract_column_text(item, date_col),
-        "notes": extract_column_text(item, notes_col),
+        "city_state_zip": extract_column_text(item, REQ_COL_CITY_STATE_ZIP),
+        "date_needed": extract_column_text(item, REQ_COL_DATE_NEEDED),
+        "notes": extract_column_text(item, REQ_COL_NOTES),
     }
 
 def extract_item_id_from_webhook(payload: Dict[str, Any]) -> Optional[int]:
