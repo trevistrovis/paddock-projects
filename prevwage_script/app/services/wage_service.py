@@ -158,9 +158,13 @@ def fetch_and_store_wage_from_sam(
     print(f"[SAM] Searching SAM for {county_name}, {state_name}, {construction_type}")
 
     if wd_cache:
+        print(f"[SAM] Using cached WD entry for {fips}: {wd_cache['wd_number']}")
         wd_number = wd_cache["wd_number"]
         wd_url = wd_cache.get("source_url")
         wd_data = fetch_wd_detail_from_sam(wd_number=wd_number, wd_url=wd_url)
+
+        if not wd_data:
+            return None
     else:
         search_result = search_sam_for_wd(
             state_name=state_name,
@@ -172,26 +176,21 @@ def fetch_and_store_wage_from_sam(
             print(f"[SAM] No WD search result found for {county_name}, {state_name}")
             return None
 
-        wd_number = search_result["wd_number"]
-        wd_url = search_result["source_url"]
-
         save_wd_cache(
             fips=fips,
-            wd_number=wd_number,
+            wd_number=search_result["wd_number"],
             construction_type=construction_type,
             wd_title=search_result.get("wd_title"),
-            source_url=wd_url,
+            source_url=search_result.get("source_url"),
             effective_date=search_result.get("effective_date"),
         )
 
-        wd_data = fetch_wd_detail_from_sam(wd_number=wd_number, wd_url=wd_url)
-
-    if not wd_data:
-        return None
+        print(f"[SAM] Cached WD placeholder for {fips}: {search_result['wd_number']}")
+        return None  # step 1 stops here if no parser yet
 
     millwright = extract_millwright_from_wd(wd_data)
     if not millwright:
-        print(f"[SAM] No Millwright line found in WD {wd_number}")
+        print(f"[SAM] No Millwright line found for cached WD {wd_number}")
         return None
 
     save_wage(

@@ -34,6 +34,6 @@ RES_COL_FRINGE_RATE = "numeric_mm19b9pk"
 REQ_STATUS_LOOKUP_QUEUED = "Lookup Queued"
 REQ_STATUS_RATE_FOUND = "Rate Found"
 REQ_STATUS_REVIEWED = "Reviewed"
-REQ_STATUS_FAILED = "Failed Lookup"
+REQ_STATUS_FAILED = "Failed"
 
 RES_STATUS_DONE = "Done"
