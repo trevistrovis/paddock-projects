@@ -11,6 +11,7 @@ DB_CONFIG = {
     "password": os.getenv("DB_PASSWORD"),
 }
 
+SAM_BASE_URL = "https://sam.gov/wage-determinations"
 DEFAULT_CONSTRUCTION_TYPE = "building"
 
 REQUESTS_BOARD_ID = 18402509426
