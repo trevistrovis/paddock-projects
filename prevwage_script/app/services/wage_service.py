@@ -164,6 +164,7 @@ def fetch_and_store_wage_from_sam(
         wd_data = fetch_wd_detail_from_sam(wd_number=wd_number, wd_url=wd_url)
 
         if not wd_data:
+            print(f"[SAM] No WD detail data returned for cached WD {wd_number}")
             return None
     else:
         search_result = search_sam_for_wd(
@@ -172,10 +173,13 @@ def fetch_and_store_wage_from_sam(
             construction_type=construction_type,
         )
 
+        print(f"[SAM] search_sam_for_wd result: {search_result}")
+
         if not search_result:
             print(f"[SAM] No WD search result found for {county_name}, {state_name}")
             return None
 
+        print(f"[SAM] Saving WD cache for FIPS {fips}")
         save_wd_cache(
             fips=fips,
             wd_number=search_result["wd_number"],
@@ -184,32 +188,9 @@ def fetch_and_store_wage_from_sam(
             source_url=search_result.get("source_url"),
             effective_date=search_result.get("effective_date"),
         )
-
         print(f"[SAM] Cached WD placeholder for {fips}: {search_result['wd_number']}")
-        return None  # step 1 stops here if no parser yet
 
-    millwright = extract_millwright_from_wd(wd_data)
-    if not millwright:
-        print(f"[SAM] No Millwright line found for cached WD {wd_number}")
         return None
-
-    save_wage(
-        fips=fips,
-        base_rate=millwright["base_rate"],
-        fringe_rate=millwright["fringe_rate"],
-        effective_date=millwright["effective_date"],
-        source="Davis-Bacon",
-        source_id=wd_number,
-        source_url=wd_url,
-        notes=f"Fetched from SAM for {county_name}, {state_name}, {construction_type}",
-    )
-
-    return {
-        "base_rate": millwright["base_rate"],
-        "fringe_rate": millwright["fringe_rate"],
-        "effective_date": millwright["effective_date"],
-        "source_note": f"Davis-Bacon {wd_number}",
-    }
 
 def lookup_millwright_wage(fips: str, as_of_date: Optional[str] = None) -> Dict[str, Any]:
     print(f"[WAGE] Looking up wage for FIPS {fips}")
@@ -236,4 +217,5 @@ def lookup_millwright_wage(fips: str, as_of_date: Optional[str] = None) -> Dict[
     if wage:
         return wage
 
+    print(f"[WAGE] SAM fallback returned nothing for {fips}")
     raise RuntimeError(f"No wage found for FIPS {fips}")
