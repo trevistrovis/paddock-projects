@@ -1,5 +1,5 @@
 from typing import Optional, Dict, Any
-
+from datetime import date
 from app.db import get_db_conn
 from app.config import DEFAULT_CONSTRUCTION_TYPE
 from app.services.location_service import get_county_by_fips
@@ -7,6 +7,7 @@ from app.services.sam_service import (
     search_sam_for_wd,
     fetch_wd_detail_from_sam,
     extract_millwright_from_wd,
+
 )
 
 def get_wage_from_db(fips: str, as_of_date: Optional[str] = None) -> Optional[Dict[str, Any]]:
@@ -157,15 +158,15 @@ def fetch_and_store_wage_from_sam(
 
     print(f"[SAM] Searching SAM for {county_name}, {state_name}, {construction_type}")
 
+    wd_number = None
+    wd_url = None
+    wd_data = None
+
     if wd_cache:
         print(f"[SAM] Using cached WD entry for {fips}: {wd_cache['wd_number']}")
         wd_number = wd_cache["wd_number"]
         wd_url = wd_cache.get("source_url")
         wd_data = fetch_wd_detail_from_sam(wd_number=wd_number, wd_url=wd_url)
-
-        if not wd_data:
-            print(f"[SAM] No WD detail data returned for cached WD {wd_number}")
-            return None
     else:
         search_result = search_sam_for_wd(
             state_name=state_name,
@@ -179,19 +180,49 @@ def fetch_and_store_wage_from_sam(
             print(f"[SAM] No WD search result found for {county_name}, {state_name}")
             return None
 
-        print(f"[SAM] Saving WD cache for FIPS {fips}")
+        wd_number = search_result["wd_number"]
+        wd_url = search_result.get("source_url")
+
         save_wd_cache(
             fips=fips,
-            wd_number=search_result["wd_number"],
+            wd_number=wd_number,
             construction_type=construction_type,
             wd_title=search_result.get("wd_title"),
-            source_url=search_result.get("source_url"),
+            source_url=wd_url,
             effective_date=search_result.get("effective_date"),
         )
-        print(f"[SAM] Cached WD placeholder for {fips}: {search_result['wd_number']}")
 
+        # Step 2 can only parse if source_url is already a real detail URL
+        wd_data = fetch_wd_detail_from_sam(wd_number=wd_number, wd_url=wd_url)
+
+    if not wd_data:
+        print(f"[SAM] No WD detail data available for {fips}")
         return None
 
+    millwright = extract_millwright_from_wd(wd_data)
+    if not millwright:
+        print(f"[SAM] No Millwright line found in WD {wd_number}")
+        return None
+
+    effective_date = millwright["effective_date"] or date.today().isoformat()
+
+    save_wage(
+        fips=fips,
+        base_rate=millwright["base_rate"],
+        fringe_rate=millwright["fringe_rate"],
+        effective_date=effective_date,
+        source="Davis-Bacon",
+        source_id=wd_number,
+        source_url=wd_url,
+        notes=f"Fetched from SAM for {county_name}, {state_name}, {construction_type}",
+    )
+
+    return {
+        "base_rate": millwright["base_rate"],
+        "fringe_rate": millwright["fringe_rate"],
+        "effective_date": effective_date,
+        "source_note": f"Davis-Bacon {wd_number}",
+    }
 def lookup_millwright_wage(fips: str, as_of_date: Optional[str] = None) -> Dict[str, Any]:
     print(f"[WAGE] Looking up wage for FIPS {fips}")
 

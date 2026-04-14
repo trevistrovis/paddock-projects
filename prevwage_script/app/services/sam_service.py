@@ -1,19 +1,27 @@
+import re
 from typing import Optional, Dict, Any
-from urllib.parse import quote_plus
-from app.config import DEFAULT_CONSTRUCTION_TYPE, SAM_BASE_URL
 
-def build_sam_search_url(
-    state_name: str,
-    county_name: str,
-    construction_type: str = DEFAULT_CONSTRUCTION_TYPE,
-) -> str:
-    """
-    For step 1, we build a search URL you can use manually or later automate.
-    """
-    # This is a placeholder search link pattern for now.
-    # We are not relying on a documented direct JSON API yet.
-    query = f"{state_name} {county_name} {construction_type} Davis-Bacon wage determination"
-    return f"{SAM_BASE_URL}?q={quote_plus(query)}"
+import requests
+from bs4 import BeautifulSoup
+
+from app.config import SAM_BASE_URL
+
+HEADERS = {
+    "User-Agent": "Mozilla/5.0",
+}
+
+RATE_LINE_RE = re.compile(
+    r"""
+    (?P<trade>MILLWRIGHT[^\n\r]*?)
+    (?P<base>\d{1,3}(?:\.\d{2})?)
+    \s*
+    (?P<fringe>\d{1,3}(?:\.\d{2})?|[A-Z].*)
+    """,
+    re.IGNORECASE | re.VERBOSE,
+)
+
+DATE_RE = re.compile(r"(?i)(?:effective|modification|published)\s*(?:date)?\s*[:\-]?\s*([A-Za-z]+\s+\d{1,2},\s+\d{4}|\d{2}/\d{2}/\d{4}|\d{4}-\d{2}-\d{2})")
+
 
 def search_sam_for_wd(
     state_name: str,
@@ -21,21 +29,12 @@ def search_sam_for_wd(
     construction_type: str,
 ) -> Optional[Dict[str, Any]]:
     """
-    Step 1 behavior:
-    - build a likely search URL
-    - return a cacheable record shape
-    - do not try to parse the full WD yet
+    Step 2 still leaves search lightweight.
+    For now this returns a search URL you can cache, not a final WD number.
     """
-    print(f"[SAM] Preparing search for {county_name}, {state_name}, {construction_type}")
+    query = f"{state_name} {county_name} {construction_type} Davis-Bacon wage determination"
+    search_url = f"{SAM_BASE_URL}?q={requests.utils.quote(query)}"
 
-    search_url = build_sam_search_url(
-        state_name=state_name,
-        county_name=county_name,
-        construction_type=construction_type,
-    )
-
-    # Step 1 placeholder result:
-    # we don't have a true WD number parser yet, so we cache the search URL only
     return {
         "wd_number": f"PENDING-{state_name[:2].upper()}-{county_name[:10].upper().replace(' ', '')}",
         "wd_title": f"{county_name}, {state_name} - {construction_type}",
@@ -43,19 +42,109 @@ def search_sam_for_wd(
         "effective_date": None,
     }
 
+
 def fetch_wd_detail_from_sam(
     wd_number: str,
     wd_url: Optional[str] = None,
 ) -> Optional[Dict[str, Any]]:
     """
-    Step 1: not implemented yet.
+    Step 2 expects wd_url to point to a specific wage-determination detail page.
+    If it's still just a search URL, parsing probably won't work yet.
     """
-    print(f"[SAM] fetch_wd_detail_from_sam not implemented yet for {wd_number}")
-    return None
+    if not wd_url:
+        print(f"[SAM] No wd_url provided for {wd_number}")
+        return None
+
+    resp = requests.get(wd_url, headers=HEADERS, timeout=30)
+    resp.raise_for_status()
+
+    html = resp.text
+    soup = BeautifulSoup(html, "html.parser")
+
+    text = soup.get_text("\n", strip=True)
+
+    return {
+        "wd_number": wd_number,
+        "wd_url": wd_url,
+        "html": html,
+        "text": text,
+        "title": soup.title.get_text(strip=True) if soup.title else None,
+    }
+
+
+def _normalize_fringe(fringe_raw: str) -> float:
+    """
+    Very conservative parser:
+    - if fringe starts with a number, use it
+    - otherwise default to 0.00 for now
+    """
+    if not fringe_raw:
+        return 0.0
+
+    m = re.search(r"(\d{1,3}(?:\.\d{2})?)", fringe_raw)
+    if not m:
+        return 0.0
+
+    return float(m.group(1))
+
+
+def _normalize_effective_date(text: str) -> str:
+    """
+    Step 2 fallback:
+    - try to find a recognizable date in the page
+    - if not found, return today's ISO date from the caller layer later if needed
+    """
+    m = DATE_RE.search(text)
+    if not m:
+        return ""
+
+    raw = m.group(1).strip()
+
+    # pass through common formats for now
+    return raw
+
 
 def extract_millwright_from_wd(wd_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     """
-    Step 1: not implemented yet.
+    Extracts Millwright line from the raw text.
+    This is intentionally simple for step 2.
     """
-    print("[SAM] extract_millwright_from_wd not implemented yet")
+    text = wd_data.get("text", "")
+    if not text:
+        return None
+
+    # First pass: line-by-line search
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+
+    for line in lines:
+        if "MILLWRIGHT" not in line.upper():
+            continue
+
+        match = RATE_LINE_RE.search(line)
+        if match:
+            base_rate = float(match.group("base"))
+            fringe_rate = _normalize_fringe(match.group("fringe"))
+            effective_date = _normalize_effective_date(text)
+
+            return {
+                "base_rate": base_rate,
+                "fringe_rate": fringe_rate,
+                "effective_date": effective_date,
+                "matched_line": line,
+            }
+
+    # Second pass: broader text search across wrapped lines
+    m = RATE_LINE_RE.search(text)
+    if m:
+        base_rate = float(m.group("base"))
+        fringe_rate = _normalize_fringe(m.group("fringe"))
+        effective_date = _normalize_effective_date(text)
+
+        return {
+            "base_rate": base_rate,
+            "fringe_rate": fringe_rate,
+            "effective_date": effective_date,
+            "matched_line": m.group(0),
+        }
+
     return None
