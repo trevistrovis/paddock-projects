@@ -138,7 +138,6 @@ def save_zip_mapping(zip_code: str, state_name: str, county_name: str) -> None:
 
 
 def fetch_zip_mapping(zip_code: str, fallback_state: Optional[str] = None) -> Optional[Dict[str, str]]:
-    # Step 1: ZIP -> lat/lon + state via Zippopotam
     zip_resp = requests.get(ZIP_API_URL.format(zip_code=zip_code), timeout=20)
     if zip_resp.status_code == 404:
         return None
@@ -154,11 +153,12 @@ def fetch_zip_mapping(zip_code: str, fallback_state: Optional[str] = None) -> Op
     lon = place.get("longitude")
     state_name = place.get("state")
 
-    # prefer explicit user state if it was an abbreviation we can expand
+    if not lat or not lon:
+        return None
+
     if fallback_state:
         state_name = STATE_ABBR.get(fallback_state.upper(), fallback_state)
 
-    # Step 2: lat/lon -> county via FCC
     fcc_resp = requests.get(
         FCC_AREA_API_URL,
         params={
@@ -171,18 +171,18 @@ def fetch_zip_mapping(zip_code: str, fallback_state: Optional[str] = None) -> Op
     fcc_resp.raise_for_status()
     fcc_data = fcc_resp.json()
 
-    county_block = fcc_data.get("results", {}).get("county")
-    state_block = fcc_data.get("results", {}).get("state")
-
-    if not county_block or not state_block:
+    results = fcc_data.get("results", [])
+    if not results:
         return None
 
-    county_name = county_block.get("name")
+    first = results[0]
+    county_name = first.get("county_name")
+
     if county_name and not county_name.lower().endswith("county"):
         county_name = f"{county_name} County"
 
     return {
         "zip": zip_code,
-        "state_name": state_name or state_block.get("name"),
+        "state_name": state_name,
         "county_name": county_name,
     }
