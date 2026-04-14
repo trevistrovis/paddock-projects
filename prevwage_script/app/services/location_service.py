@@ -1,4 +1,5 @@
 import re
+import requests
 from typing import Dict, Optional
 from app.db import get_db_conn
 
