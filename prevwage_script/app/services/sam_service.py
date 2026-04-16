@@ -23,12 +23,12 @@ RATE_LINE_RE = re.compile(
     re.IGNORECASE | re.VERBOSE,
 )
 
+TXT_LINK_RE = re.compile(r"\.txt($|\?)", re.IGNORECASE)
+
 DATE_RE = re.compile(
-    r"(?i)(?:effective|modification|published)\s*(?:date)?\s*[:\-]?\s*([A-Za-z]+\s+\d{1,2},\s+\d{4}|\d{2}/\d{2}/\d{4}|\d{4}-\d{2}-\d{2})"
+    r"(?i)(?:effective|modification|published)\s*(?:date)?\s*[:\-]?\s*"
+    r"([A-Za-z]+\s+\d{1,2},\s+\d{4}|\d{2}/\d{2}/\d{4}|\d{4}-\d{2}-\d{2})"
 )
-
-TXT_LINK_RE = re.compile(r"\.txt($|\?)", re.IGNORECASE)published)\s*(?:date)?\s*[:\-]?\s*([A-Za-z]+\s+\d{1,2},\s+\d{4}|\d{2}/\d{2}/\d{4}|\d{4}-\d{2}-\d{2})")
-
 
 WD_NUMBER_RE = re.compile(r"\b([A-Z]{2}\d{8})\b")
 TXT_LINK_RE = re.compile(r"\.txt($|\?)", re.IGNORECASE)
