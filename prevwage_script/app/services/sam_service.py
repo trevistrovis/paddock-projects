@@ -46,6 +46,7 @@ def search_sam_for_wd(
 def fetch_wd_detail_from_sam(
     wd_number: str,
     wd_url: Optional[str] = None,
+    
 ) -> Optional[Dict[str, Any]]:
     """
     Step 2 expects wd_url to point to a specific wage-determination detail page.
@@ -62,7 +63,12 @@ def fetch_wd_detail_from_sam(
     soup = BeautifulSoup(html, "html.parser")
 
     text = soup.get_text("\n", strip=True)
-
+    
+    print(f"[SAM] Fetching WD detail from: {wd_url}")
+    print(f"[SAM] HTTP status: {resp.status_code}")
+    print(f"[SAM] Page title: {soup.title.get_text(strip=True) if soup.title else 'NO TITLE'}")
+    print(f"[SAM] Text sample: {text[:1000]}")
+    
     return {
         "wd_number": wd_number,
         "wd_url": wd_url,
@@ -125,14 +131,17 @@ def extract_millwright_from_wd(wd_data: Dict[str, Any]) -> Optional[Dict[str, An
             base_rate = float(match.group("base"))
             fringe_rate = _normalize_fringe(match.group("fringe"))
             effective_date = _normalize_effective_date(text)
-
+            print("[SAM] Searching for Millwright in WD text")
+            
             return {
                 "base_rate": base_rate,
                 "fringe_rate": fringe_rate,
                 "effective_date": effective_date,
                 "matched_line": line,
             }
-
+        else:
+            print("[SAM] No Millwright match found")
+    
     # Second pass: broader text search across wrapped lines
     m = RATE_LINE_RE.search(text)
     if m:
