@@ -1,8 +1,11 @@
+import os
 import re
+import tempfile
 from typing import Optional, Dict, Any
 
 import requests
 from bs4 import BeautifulSoup
+from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
 
 from app.config import SAM_BASE_URL
 
@@ -20,15 +23,12 @@ RATE_LINE_RE = re.compile(
     re.IGNORECASE | re.VERBOSE,
 )
 
-DATE_RE = re.compile(r"(?i)(?:effective|modification|published)\s*(?:date)?\s*[:\-]?\s*([A-Za-z]+\s+\d{1,2},\s+\d{4}|\d{2}/\d{2}/\d{4}|\d{4}-\d{2}-\d{2})")
+DATE_RE = re.compile(
+    r"(?i)(?:effective|modification|published)\s*(?:date)?\s*[:\-]?\s*([A-Za-z]+\s+\d{1,2},\s+\d{4}|\d{2}/\d{2}/\d{4}|\d{4}-\d{2}-\d{2})"
+)
 
+TXT_LINK_RE = re.compile(r"\.txt($|\?)", re.IGNORECASE)published)\s*(?:date)?\s*[:\-]?\s*([A-Za-z]+\s+\d{1,2},\s+\d{4}|\d{2}/\d{2}/\d{4}|\d{4}-\d{2}-\d{2})")
 
-import re
-from typing import Optional, Dict, Any
-
-from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
-
-from app.config import SAM_BASE_URL
 
 WD_NUMBER_RE = re.compile(r"\b([A-Z]{2}\d{8})\b")
 TXT_LINK_RE = re.compile(r"\.txt($|\?)", re.IGNORECASE)
@@ -155,21 +155,117 @@ def fetch_wd_detail_from_sam(
     wd_number: str,
     wd_url: Optional[str] = None,
 ) -> Optional[Dict[str, Any]]:
+    """
+    Supports two cases:
+    1. wd_url is already a .txt URL -> fetch directly with requests
+    2. wd_url is a SAM detail page -> open in Playwright, click Download, read txt
+    """
     if not wd_url:
         print(f"[SAM] No wd_url provided for {wd_number}")
         return None
 
-    resp = requests.get(wd_url, headers=HEADERS, timeout=30)
-    resp.raise_for_status()
+    # Case 1: direct TXT URL
+    if TXT_LINK_RE.search(wd_url):
+        print(f"[SAM] Fetching WD TXT directly: {wd_url}")
+        resp = requests.get(wd_url, headers=HEADERS, timeout=30)
+        resp.raise_for_status()
 
-    text = resp.text
+        return {
+            "wd_number": wd_number,
+            "wd_url": wd_url,
+            "text": resp.text,
+            "title": wd_number,
+        }
 
-    return {
-        "wd_number": wd_number,
-        "wd_url": wd_url,
-        "text": text,
-        "title": wd_number,
-    }
+    # Case 2: detail page -> use Playwright to click Download
+    print(f"[SAM] Opening WD detail page in browser: {wd_url}")
+
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        context = browser.new_context(accept_downloads=True)
+        page = context.new_page()
+
+        try:
+            page.goto(wd_url, wait_until="networkidle", timeout=60000)
+
+            body_text = page.locator("body").inner_text(timeout=10000)
+            print(f"[SAM] Detail page text sample: {body_text[:1500]}")
+
+            download = None
+
+            # Strategy 1: click a visible Download button/link and let Playwright download the file
+            download_selectors = [
+                lambda: page.get_by_role("button", name=re.compile("download", re.I)).first,
+                lambda: page.get_by_role("link", name=re.compile("download", re.I)).first,
+                lambda: page.get_by_text(re.compile("download", re.I)).first,
+            ]
+
+            for selector_fn in download_selectors:
+                try:
+                    candidate = selector_fn()
+                    candidate.wait_for(timeout=5000)
+
+                    with page.expect_download(timeout=15000) as download_info:
+                        candidate.click()
+                    download = download_info.value
+                    print("[SAM] Download button clicked successfully")
+                    break
+                except Exception:
+                    continue
+
+            # Strategy 2: if no download event fired, try to find a .txt href on the page
+            if download is None:
+                print("[SAM] No direct download event; scanning page links for .txt")
+                txt_href = None
+                for a in page.locator("a").all():
+                    try:
+                        href = a.get_attribute("href")
+                        if href and TXT_LINK_RE.search(href):
+                            txt_href = href
+                            break
+                    except Exception:
+                        continue
+
+                if txt_href:
+                    print(f"[SAM] Found TXT href in page: {txt_href}")
+                    resp = requests.get(txt_href, headers=HEADERS, timeout=30)
+                    resp.raise_for_status()
+                    text = resp.text
+
+                    return {
+                        "wd_number": wd_number,
+                        "wd_url": txt_href,
+                        "text": text,
+                        "title": wd_number,
+                    }
+
+                print("[SAM] No downloadable TXT found on detail page")
+                return None
+
+            # Save download to temp path and read it
+            with tempfile.TemporaryDirectory() as tmpdir:
+                save_path = os.path.join(tmpdir, download.suggested_filename)
+                download.save_as(save_path)
+
+                with open(save_path, "r", encoding="utf-8", errors="replace") as f:
+                    text = f.read()
+
+            return {
+                "wd_number": wd_number,
+                "wd_url": wd_url,
+                "text": text,
+                "title": wd_number,
+            }
+
+        except PlaywrightTimeoutError as exc:
+            print(f"[SAM] Playwright timeout while fetching WD detail: {exc}")
+            return None
+        except Exception as exc:
+            print(f"[SAM] WD detail fetch failed: {exc}")
+            return None
+        finally:
+            context.close()
+            browser.close()
 
 
 def _normalize_fringe(fringe_raw: str) -> float:
