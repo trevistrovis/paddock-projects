@@ -46,12 +46,7 @@ def search_sam_for_wd(
 def fetch_wd_detail_from_sam(
     wd_number: str,
     wd_url: Optional[str] = None,
-    
 ) -> Optional[Dict[str, Any]]:
-    """
-    Step 2 expects wd_url to point to a specific wage-determination detail page.
-    If it's still just a search URL, parsing probably won't work yet.
-    """
     if not wd_url:
         print(f"[SAM] No wd_url provided for {wd_number}")
         return None
@@ -59,22 +54,13 @@ def fetch_wd_detail_from_sam(
     resp = requests.get(wd_url, headers=HEADERS, timeout=30)
     resp.raise_for_status()
 
-    html = resp.text
-    soup = BeautifulSoup(html, "html.parser")
+    text = resp.text
 
-    text = soup.get_text("\n", strip=True)
-    
-    print(f"[SAM] Fetching WD detail from: {wd_url}")
-    print(f"[SAM] HTTP status: {resp.status_code}")
-    print(f"[SAM] Page title: {soup.title.get_text(strip=True) if soup.title else 'NO TITLE'}")
-    print(f"[SAM] Text sample: {text[:1000]}")
-    
     return {
         "wd_number": wd_number,
         "wd_url": wd_url,
-        "html": html,
         "text": text,
-        "title": soup.title.get_text(strip=True) if soup.title else None,
+        "title": wd_number,
     }
 
 
@@ -111,49 +97,46 @@ def _normalize_effective_date(text: str) -> str:
 
 
 def extract_millwright_from_wd(wd_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    """
-    Extracts Millwright line from the raw text.
-    This is intentionally simple for step 2.
-    """
     text = wd_data.get("text", "")
     if not text:
         return None
 
-    # First pass: line-by-line search
     lines = [line.strip() for line in text.splitlines() if line.strip()]
 
-    for line in lines:
+    for i, line in enumerate(lines):
         if "MILLWRIGHT" not in line.upper():
             continue
 
-        match = RATE_LINE_RE.search(line)
-        if match:
-            base_rate = float(match.group("base"))
-            fringe_rate = _normalize_fringe(match.group("fringe"))
-            effective_date = _normalize_effective_date(text)
-            print("[SAM] Searching for Millwright in WD text")
-            
-            return {
-                "base_rate": base_rate,
-                "fringe_rate": fringe_rate,
-                "effective_date": effective_date,
-                "matched_line": line,
-            }
-        else:
-            print("[SAM] No Millwright match found")
-    
-    # Second pass: broader text search across wrapped lines
-    m = RATE_LINE_RE.search(text)
-    if m:
-        base_rate = float(m.group("base"))
-        fringe_rate = _normalize_fringe(m.group("fringe"))
+        print(f"[SAM] Found candidate Millwright line: {line}")
+
+        rate_match = re.search(r"(\d{1,3}\.\d{2})", line)
+        if not rate_match and i + 1 < len(lines):
+            rate_match = re.search(r"(\d{1,3}\.\d{2})", lines[i + 1])
+
+        if not rate_match:
+            continue
+
+        base_rate = float(rate_match.group(1))
+
+        fringe_rate = 0.0
+        fringe_match = re.search(r"(\d{1,3}\.\d{2}).*?(\d{1,3}\.\d{2})", line)
+        if fringe_match:
+            base_rate = float(fringe_match.group(1))
+            fringe_rate = float(fringe_match.group(2))
+        elif i + 1 < len(lines):
+            next_line = lines[i + 1]
+            next_match = re.search(r"(\d{1,3}\.\d{2})", next_line)
+            if next_match and float(next_match.group(1)) != base_rate:
+                fringe_rate = float(next_match.group(1))
+
         effective_date = _normalize_effective_date(text)
 
         return {
             "base_rate": base_rate,
             "fringe_rate": fringe_rate,
             "effective_date": effective_date,
-            "matched_line": m.group(0),
+            "matched_line": line,
         }
 
+    print("[SAM] No Millwright match found")
     return None
