@@ -81,6 +81,7 @@ def save_wd_cache(
     construction_type: str,
     wd_title: Optional[str] = None,
     source_url: Optional[str] = None,
+    detail_url: Optional[str] = None,
     effective_date: Optional[str] = None,
 ) -> None:
     conn = get_db_conn()
@@ -90,16 +91,17 @@ def save_wd_cache(
         cur.execute(
             """
             INSERT INTO wage_determination_cache (
-                fips, wd_number, construction_type, wd_title, source_url, effective_date
+                fips, wd_number, construction_type, wd_title, source_url, detail_url, effective_date
             )
-            VALUES (%s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
             ON DUPLICATE KEY UPDATE
                 wd_title = VALUES(wd_title),
                 source_url = VALUES(source_url),
+                detail_url = VALUES(detail_url),
                 effective_date = VALUES(effective_date),
                 retrieved_at = CURRENT_TIMESTAMP
             """,
-            (fips, wd_number, construction_type, wd_title, source_url, effective_date)
+            (fips, wd_number, construction_type, wd_title, source_url, detail_url, effective_date)
         )
         conn.commit()
     finally:
@@ -163,9 +165,10 @@ def fetch_and_store_wage_from_sam(
     wd_data = None
 
     if wd_cache:
-        print(f"[SAM] Using cached WD entry for {fips}: {wd_cache['wd_number']}")
-        wd_number = wd_cache["wd_number"]
-        wd_url = wd_cache.get("source_url")
+        wd_url = wd_cache.get("source_url") or wd_cache.get("detail_url")
+        detail_url = wd_cache.get("detail_url")
+        print(f"[SAM] Cached WD URLs for {fips}: source_url={wd_url}, detail_url={detail_url}")
+
         wd_data = fetch_wd_detail_from_sam(wd_number=wd_number, wd_url=wd_url)
     else:
         search_result = search_sam_for_wd(
@@ -185,12 +188,13 @@ def fetch_and_store_wage_from_sam(
 
         save_wd_cache(
             fips=fips,
-            wd_number=wd_number,
+            wd_number=search_result["wd_number"],
             construction_type=construction_type,
             wd_title=search_result.get("wd_title"),
-            source_url=wd_url,
+            source_url=search_result.get("source_url"),
+            detail_url=search_result.get("detail_url"),
             effective_date=search_result.get("effective_date"),
-        )
+)
 
         # Step 2 can only parse if source_url is already a real detail URL
         wd_data = fetch_wd_detail_from_sam(wd_number=wd_number, wd_url=wd_url)

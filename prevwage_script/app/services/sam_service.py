@@ -23,24 +23,132 @@ RATE_LINE_RE = re.compile(
 DATE_RE = re.compile(r"(?i)(?:effective|modification|published)\s*(?:date)?\s*[:\-]?\s*([A-Za-z]+\s+\d{1,2},\s+\d{4}|\d{2}/\d{2}/\d{4}|\d{4}-\d{2}-\d{2})")
 
 
+import re
+from typing import Optional, Dict, Any
+
+from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
+
+from app.config import SAM_BASE_URL
+
+WD_NUMBER_RE = re.compile(r"\b([A-Z]{2}\d{8})\b")
+TXT_LINK_RE = re.compile(r"\.txt($|\?)", re.IGNORECASE)
+
+
 def search_sam_for_wd(
     state_name: str,
     county_name: str,
     construction_type: str,
 ) -> Optional[Dict[str, Any]]:
     """
-    Step 2 still leaves search lightweight.
-    For now this returns a search URL you can cache, not a final WD number.
+    Browser-automation version:
+    - opens SAM wage determinations
+    - searches for county/state/construction type
+    - tries to capture WD number + detail URL
+    - if possible, captures TXT download URL
     """
-    query = f"{state_name} {county_name} {construction_type} Davis-Bacon wage determination"
-    search_url = f"{SAM_BASE_URL}?q={requests.utils.quote(query)}"
 
-    return {
-        "wd_number": f"PENDING-{state_name[:2].upper()}-{county_name[:10].upper().replace(' ', '')}",
-        "wd_title": f"{county_name}, {state_name} - {construction_type}",
-        "source_url": search_url,
-        "effective_date": None,
-    }
+    search_phrase = f"{state_name} {county_name} {construction_type}"
+    print(f"[SAM] WD discovery search phrase: {search_phrase}")
+
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        page = browser.new_page()
+
+        try:
+            page.goto(SAM_BASE_URL, wait_until="networkidle", timeout=60000)
+
+            # This part may need selector tweaks depending on the page.
+            # We intentionally use broader text/role selectors first.
+            page.get_by_text("Public Buildings or Works", exact=False).click(timeout=15000)
+            page.get_by_text("Get started searching wage determinations", exact=False).click(timeout=15000)
+
+            # Try to find a generic search input on the resulting page
+            search_input = None
+            for locator in [
+                page.locator('input[type="search"]').first,
+                page.locator('input[placeholder*="Search"]').first,
+                page.locator('input').first,
+            ]:
+                try:
+                    locator.wait_for(timeout=5000)
+                    search_input = locator
+                    break
+                except Exception:
+                    pass
+
+            if search_input is None:
+                print("[SAM] Could not find a search input")
+                return None
+
+            search_input.fill(search_phrase)
+            search_input.press("Enter")
+            page.wait_for_load_state("networkidle", timeout=30000)
+
+            content = page.content()
+            text = page.locator("body").inner_text(timeout=10000)
+
+            # Try to find a WD number in the rendered page text
+            wd_match = WD_NUMBER_RE.search(text)
+            wd_number = wd_match.group(1) if wd_match else None
+
+            # Try to capture a likely WD detail link
+            detail_url = None
+            for a in page.locator("a").all():
+                try:
+                    href = a.get_attribute("href")
+                    if href and "/wage-determination/" in href:
+                        detail_url = href
+                        if detail_url.startswith("/"):
+                            detail_url = "https://sam.gov" + detail_url
+                        break
+                except Exception:
+                    continue
+
+            # If we found a detail URL, open it and look for the TXT download link
+            txt_url = None
+            if detail_url:
+                detail_page = browser.new_page()
+                detail_page.goto(detail_url, wait_until="networkidle", timeout=60000)
+
+                for a in detail_page.locator("a").all():
+                    try:
+                        href = a.get_attribute("href")
+                        if href and TXT_LINK_RE.search(href):
+                            txt_url = href
+                            break
+                    except Exception:
+                        continue
+
+                # Fallback: inspect rendered HTML/text if needed
+                detail_text = detail_page.locator("body").inner_text(timeout=10000)
+                if not wd_number:
+                    wd_match = WD_NUMBER_RE.search(detail_text)
+                    wd_number = wd_match.group(1) if wd_match else None
+
+                detail_page.close()
+
+            browser.close()
+
+            if not detail_url:
+                print("[SAM] No detail URL found")
+                return None
+
+            return {
+                "wd_number": wd_number,
+                "wd_title": f"{county_name}, {state_name} - {construction_type}",
+                "source_url": txt_url or detail_url,
+                "detail_url": detail_url,
+                "effective_date": None,
+        }
+
+        except PlaywrightTimeoutError as exc:
+            print(f"[SAM] Playwright timeout during WD discovery: {exc}")
+            browser.close()
+            return None
+        except Exception as exc:
+            print(f"[SAM] WD discovery failed: {exc}")
+            browser.close()
+            return None
 
 
 def fetch_wd_detail_from_sam(
