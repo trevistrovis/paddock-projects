@@ -39,14 +39,6 @@ def search_sam_for_wd(
     county_name: str,
     construction_type: str,
 ) -> Optional[Dict[str, Any]]:
-    """
-    Browser-automation version:
-    - opens SAM wage determinations
-    - searches for county/state/construction type
-    - tries to capture WD number + detail URL
-    - if possible, captures TXT download URL
-    """
-
     search_phrase = f"{state_name} {county_name} {construction_type}"
     print(f"[SAM] WD discovery search phrase: {search_phrase}")
 
@@ -57,89 +49,97 @@ def search_sam_for_wd(
         try:
             page.goto(SAM_BASE_URL, wait_until="networkidle", timeout=60000)
 
-            # This part may need selector tweaks depending on the page.
-            # We intentionally use broader text/role selectors first.
-            page.get_by_text("Public Buildings or Works", exact=False).click(timeout=15000)
-            page.get_by_text("Get started searching wage determinations", exact=False).click(timeout=15000)
+            body_text = page.locator("body").inner_text(timeout=10000)
+            print(f"[SAM] Landing page text sample: {body_text[:1500]}")
 
-            # Try to find a generic search input on the resulting page
+            candidate_selectors = [
+                'input[type="search"]',
+                'input[placeholder*="Search"]',
+                'input[aria-label*="Search"]',
+                'input',
+            ]
+
             search_input = None
-            for locator in [
-                page.locator('input[type="search"]').first,
-                page.locator('input[placeholder*="Search"]').first,
-                page.locator('input').first,
-            ]:
+            for selector in candidate_selectors:
                 try:
+                    locator = page.locator(selector).first
                     locator.wait_for(timeout=5000)
                     search_input = locator
+                    print(f"[SAM] Using search input selector: {selector}")
                     break
                 except Exception:
-                    pass
+                    continue
 
             if search_input is None:
-                print("[SAM] Could not find a search input")
+                print("[SAM] No search input found on landing page")
+                browser.close()
                 return None
 
             search_input.fill(search_phrase)
             search_input.press("Enter")
             page.wait_for_load_state("networkidle", timeout=30000)
 
-            content = page.content()
-            text = page.locator("body").inner_text(timeout=10000)
+            result_text = page.locator("body").inner_text(timeout=10000)
+            print(f"[SAM] Results page text sample: {result_text[:2000]}")
 
-            # Try to find a WD number in the rendered page text
-            wd_match = WD_NUMBER_RE.search(text)
-            wd_number = wd_match.group(1) if wd_match else None
+            wd_number = None
+            wd_match = WD_NUMBER_RE.search(result_text)
+            if wd_match:
+                wd_number = wd_match.group(1)
 
-            # Try to capture a likely WD detail link
             detail_url = None
+            txt_url = None
+
             for a in page.locator("a").all():
                 try:
                     href = a.get_attribute("href")
-                    if href and "/wage-determination/" in href:
-                        detail_url = href
-                        if detail_url.startswith("/"):
-                            detail_url = "https://sam.gov" + detail_url
-                        break
+                    if href:
+                        if "/wage-determination/" in href and not detail_url:
+                            detail_url = href if href.startswith("http") else "https://sam.gov" + href
+                            print(f"[SAM] Found detail URL: {detail_url}")
+                        if TXT_LINK_RE.search(href) and not txt_url:
+                            txt_url = href
+                            print(f"[SAM] Found TXT URL: {txt_url}")
                 except Exception:
                     continue
 
-            # If we found a detail URL, open it and look for the TXT download link
-            txt_url = None
-            if detail_url:
+            if detail_url and not txt_url:
                 detail_page = browser.new_page()
                 detail_page.goto(detail_url, wait_until="networkidle", timeout=60000)
+
+                detail_text = detail_page.locator("body").inner_text(timeout=10000)
+                print(f"[SAM] Detail page text sample: {detail_text[:2000]}")
+
+                if not wd_number:
+                    wd_match = WD_NUMBER_RE.search(detail_text)
+                    if wd_match:
+                        wd_number = wd_match.group(1)
 
                 for a in detail_page.locator("a").all():
                     try:
                         href = a.get_attribute("href")
                         if href and TXT_LINK_RE.search(href):
                             txt_url = href
+                            print(f"[SAM] Found TXT URL on detail page: {txt_url}")
                             break
                     except Exception:
                         continue
-
-                # Fallback: inspect rendered HTML/text if needed
-                detail_text = detail_page.locator("body").inner_text(timeout=10000)
-                if not wd_number:
-                    wd_match = WD_NUMBER_RE.search(detail_text)
-                    wd_number = wd_match.group(1) if wd_match else None
 
                 detail_page.close()
 
             browser.close()
 
-            if not detail_url:
-                print("[SAM] No detail URL found")
+            if not detail_url and not txt_url:
+                print("[SAM] No WD detail or TXT URL found")
                 return None
 
             return {
-                "wd_number": wd_number,
+                "wd_number": wd_number or f"UNKNOWN-{state_name[:2].upper()}-{county_name[:10].upper().replace(' ', '')}",
                 "wd_title": f"{county_name}, {state_name} - {construction_type}",
                 "source_url": txt_url or detail_url,
                 "detail_url": detail_url,
                 "effective_date": None,
-        }
+            }
 
         except PlaywrightTimeoutError as exc:
             print(f"[SAM] Playwright timeout during WD discovery: {exc}")
