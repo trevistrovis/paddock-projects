@@ -1,6 +1,8 @@
 import json
 from fastapi import APIRouter, Request, BackgroundTasks
 from fastapi.responses import JSONResponse, Response
+from fastapi.concurrency import run_in_threadpool
+from starlette.requests import Request
 
 from app.config import REQ_STATUS_RATE_FOUND, REQ_STATUS_REVIEWED
 from app.services.monday_service import (
@@ -74,7 +76,7 @@ def process_request_item(item_id: int) -> None:
             print(f"[PROCESS][ERROR] Failed reporting error to Monday: {repr(inner_exc)}")
 
 @router.post("/monday/webhook")
-async def monday_webhook(request: Request, background_tasks: BackgroundTasks):
+async def monday_webhook(request: Request):
     raw = await request.body()
     print("RAW BODY:", raw.decode("utf-8", errors="replace"))
 
@@ -96,7 +98,7 @@ async def monday_webhook(request: Request, background_tasks: BackgroundTasks):
             content={"ok": False, "error": "Could not determine item ID from webhook payload"},
         )
 
-    process_request_item(item_id)
+    await run_in_threadpool(process_request_item, item_id)
 
     return JSONResponse(
         status_code=200,
