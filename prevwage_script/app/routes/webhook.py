@@ -96,11 +96,11 @@ async def monday_webhook(request: Request, background_tasks: BackgroundTasks):
             content={"ok": False, "error": "Could not determine item ID from webhook payload"},
         )
 
-    background_tasks.add_task(process_request_item, item_id)
+    process_request_item(item_id)
 
     return JSONResponse(
         status_code=200,
-        content={"ok": True, "message": f"Processing item {item_id}"},
+        content={"ok": True, "message": f"Processed item {item_id}"},
     )
 
 @router.get("/test-location")
