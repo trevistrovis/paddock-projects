@@ -48,48 +48,71 @@ def search_sam_for_wd(
         page = browser.new_page()
 
         try:
-            page.goto(SAM_BASE_URL, wait_until="networkidle", timeout=60000)
+            page.goto(SAM_BASE_URL, wait_until="domcontentloaded", timeout=60000)
+            page.wait_for_timeout(3000)
 
             body_text = page.locator("body").inner_text(timeout=10000)
             print(f"[SAM] Landing page text sample: {body_text[:1500]}")
 
+            # Step 1: click the DBA search path explicitly
+            page.get_by_text("Public Buildings or Works", exact=False).click(timeout=15000)
+            page.wait_for_timeout(1500)
+
+            page.get_by_text("Get started searching wage determinations", exact=False).click(timeout=15000)
+            page.wait_for_timeout(3000)
+
+            # Let the next page render fully
+            page.wait_for_load_state("domcontentloaded", timeout=30000)
+            page.wait_for_timeout(3000)
+
+            results_body = page.locator("body")
+            results_body.wait_for(timeout=10000)
+            result_text = results_body.inner_text(timeout=10000)
+            print(f"[SAM] Results page text sample: {result_text[:2000]}")
+
+            # Find a real search input on the search page
+            search_input = None
             candidate_selectors = [
                 'input[type="search"]',
                 'input[placeholder*="Search"]',
                 'input[aria-label*="Search"]',
+                'input[name*="search"]',
                 'input',
             ]
 
-            search_input = None
             for selector in candidate_selectors:
                 try:
                     locator = page.locator(selector).first
-                    locator.wait_for(timeout=5000)
+                    locator.wait_for(timeout=3000)
+                    placeholder = locator.get_attribute("placeholder")
+                    aria_label = locator.get_attribute("aria-label")
+                    print(f"[SAM] Candidate input selector={selector}, placeholder={placeholder}, aria-label={aria_label}")
                     search_input = locator
-                    print(f"[SAM] Using search input selector: {selector}")
                     break
                 except Exception:
                     continue
 
             if search_input is None:
-                print("[SAM] No search input found on landing page")
+                print("[SAM] No search input found after entering DBA search flow")
                 browser.close()
                 return None
 
             search_input.fill(search_phrase)
             search_input.press("Enter")
-            page.wait_for_load_state("networkidle", timeout=30000)
+            page.wait_for_load_state("domcontentloaded", timeout=30000)
+            page.wait_for_timeout(4000)
 
             result_text = page.locator("body").inner_text(timeout=10000)
-            print(f"[SAM] Results page text sample: {result_text[:2000]}")
+            print(f"[SAM] Search results text sample: {result_text[:2500]}")
 
-            # Gather candidate detail URLs
             candidate_urls = []
             seen = set()
 
             for a in page.locator("a").all():
                 try:
                     href = a.get_attribute("href")
+                    link_text = (a.inner_text() or "").strip()
+
                     if not href:
                         continue
 
@@ -98,6 +121,7 @@ def search_sam_for_wd(
                         if full_url not in seen:
                             seen.add(full_url)
                             candidate_urls.append(full_url)
+                            print(f"[SAM] Candidate WD link: text='{link_text}' url='{full_url}'")
                 except Exception:
                     continue
 
@@ -107,25 +131,25 @@ def search_sam_for_wd(
                 browser.close()
                 return None
 
-            # Try each candidate until one matches requested county/state
             for candidate_url in candidate_urls[:10]:
                 print(f"[SAM] Checking candidate WD detail URL: {candidate_url}")
 
                 detail_page = browser.new_page()
                 try:
-                    detail_page.goto(candidate_url, wait_until="networkidle", timeout=60000)
+                    detail_page.goto(candidate_url, wait_until="domcontentloaded", timeout=60000)
+                    detail_page.wait_for_timeout(3000)
+
+                    txt_url = None
+                    wd_number = None
 
                     detail_text = detail_page.locator("body").inner_text(timeout=10000)
                     print(f"[SAM] Candidate detail page text sample: {detail_text[:1500]}")
 
-                    wd_number = None
                     wd_match = WD_NUMBER_RE.search(detail_text)
                     if wd_match:
                         wd_number = wd_match.group(1)
 
-                    txt_url = None
-
-                    # First try direct txt links already present
+                    # Try direct txt links first
                     for a in detail_page.locator("a").all():
                         try:
                             href = a.get_attribute("href")
@@ -138,20 +162,19 @@ def search_sam_for_wd(
 
                     wd_text = None
 
-                    # If no direct txt link, click Download and capture text
+                    # If no txt href, click Download
                     if not txt_url:
                         download = None
-                        download_selectors = [
+                        download_candidates = [
                             lambda: detail_page.get_by_role("button", name=re.compile("download", re.I)).first,
                             lambda: detail_page.get_by_role("link", name=re.compile("download", re.I)).first,
                             lambda: detail_page.get_by_text(re.compile("download", re.I)).first,
                         ]
 
-                        for selector_fn in download_selectors:
+                        for selector_fn in download_candidates:
                             try:
                                 candidate = selector_fn()
                                 candidate.wait_for(timeout=5000)
-
                                 with detail_page.expect_download(timeout=15000) as download_info:
                                     candidate.click()
                                 download = download_info.value
@@ -164,7 +187,6 @@ def search_sam_for_wd(
                             with tempfile.TemporaryDirectory() as tmpdir:
                                 save_path = os.path.join(tmpdir, download.suggested_filename)
                                 download.save_as(save_path)
-
                                 with open(save_path, "r", encoding="utf-8", errors="replace") as f:
                                     wd_text = f.read()
                         else:
@@ -180,13 +202,10 @@ def search_sam_for_wd(
                         detail_page.close()
                         continue
 
-                    # Validate county/state before accepting this WD
                     wd_text_upper = wd_text.upper()
 
                     if expected_header not in wd_text_upper:
-                        print(
-                            f"[SAM] Candidate rejected. Expected header '{expected_header}' not found."
-                        )
+                        print(f"[SAM] Candidate rejected. Expected header '{expected_header}' not found.")
                         detail_page.close()
                         continue
 
