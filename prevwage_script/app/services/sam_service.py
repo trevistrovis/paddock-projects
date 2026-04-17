@@ -54,21 +54,29 @@ def search_sam_for_wd(
             body_text = page.locator("body").inner_text(timeout=10000)
             print(f"[SAM] Landing page text sample: {body_text[:1500]}")
 
-            # Step 1: click the DBA search path explicitly
-            page.get_by_text("Public Buildings or Works", exact=False).click(timeout=15000)
-            page.wait_for_timeout(1500)
+            # Click the DBA/Public Buildings card path more defensively
+            pbo_locator = page.get_by_text("Public Buildings or Works", exact=False).first
+            pbo_locator.wait_for(timeout=15000)
+            pbo_locator.scroll_into_view_if_needed()
+            pbo_locator.click(force=True)
+            page.wait_for_timeout(2500)
 
-            page.get_by_text("Get started searching wage determinations", exact=False).click(timeout=15000)
-            page.wait_for_timeout(3000)
+            # Try clicking the DBA label/card if it exists
+            try:
+                dba_locator = page.get_by_text("Davis-Bacon Act (DBA)", exact=False).first
+                dba_locator.wait_for(timeout=5000)
+                dba_locator.scroll_into_view_if_needed()
+                dba_locator.click(force=True)
+                page.wait_for_timeout(2500)
+            except Exception as exc:
+                print(f"[SAM] DBA click skipped or not needed: {exc}")
 
-            # Let the next page render fully
-            page.wait_for_load_state("domcontentloaded", timeout=30000)
-            page.wait_for_timeout(3000)
-
+            # After the card click(s), log what page we are on
             results_body = page.locator("body")
             results_body.wait_for(timeout=10000)
             result_text = results_body.inner_text(timeout=10000)
-            print(f"[SAM] Results page text sample: {result_text[:2000]}")
+            print(f"[SAM] Post-card-click page text sample: {result_text[:2000]}")
+
 
             # Find a real search input on the search page
             search_input = None
