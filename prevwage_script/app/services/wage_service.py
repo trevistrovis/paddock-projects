@@ -162,12 +162,17 @@ def fetch_and_store_wage_from_sam(
 
     wd_number = None
     wd_url = None
+    detail_url = None
     wd_data = None
 
     if wd_cache:
         wd_number = wd_cache["wd_number"]
         wd_url = wd_cache.get("source_url") or wd_cache.get("detail_url")
-        print(f"[SAM] Cached WD URLs for {fips}: source_url={wd_cache.get('source_url')}, detail_url={wd_cache.get('detail_url')}")
+        detail_url = wd_cache.get("detail_url")
+        print(
+            f"[SAM] Cached WD URLs for {fips}: "
+            f"source_url={wd_cache.get('source_url')}, detail_url={wd_cache.get('detail_url')}"
+        )
         wd_data = fetch_wd_detail_from_sam(wd_number=wd_number, wd_url=wd_url)
     else:
         search_result = search_sam_for_wd(
@@ -184,18 +189,8 @@ def fetch_and_store_wage_from_sam(
 
         wd_number = search_result["wd_number"]
         wd_url = search_result.get("source_url")
+        detail_url = search_result.get("detail_url")
 
-        save_wd_cache(
-            fips=fips,
-            wd_number=search_result["wd_number"],
-            construction_type=construction_type,
-            wd_title=search_result.get("wd_title"),
-            source_url=search_result.get("source_url"),
-            detail_url=search_result.get("detail_url"),
-            effective_date=search_result.get("effective_date"),
-        )
-
-        # Step 2 can only parse if source_url is already a real detail URL
         wd_data = fetch_wd_detail_from_sam(wd_number=wd_number, wd_url=wd_url)
 
     if not wd_data:
@@ -206,6 +201,18 @@ def fetch_and_store_wage_from_sam(
     if not millwright:
         print(f"[SAM] No Millwright line found in WD {wd_number}")
         return None
+
+    # Only cache after validation succeeds
+    if not wd_cache:
+        save_wd_cache(
+            fips=fips,
+            wd_number=wd_number,
+            construction_type=construction_type,
+            wd_title=f"{county_name}, {state_name} - {construction_type}",
+            source_url=wd_url,
+            detail_url=detail_url,
+            effective_date=millwright.get("effective_date"),
+        )
 
     effective_date = millwright["effective_date"] or date.today().isoformat()
 
@@ -226,6 +233,7 @@ def fetch_and_store_wage_from_sam(
         "effective_date": effective_date,
         "source_note": f"Davis-Bacon {wd_number}",
     }
+
 def lookup_millwright_wage(fips: str, as_of_date: Optional[str] = None) -> Dict[str, Any]:
     print(f"[WAGE] Looking up wage for FIPS {fips}")
 

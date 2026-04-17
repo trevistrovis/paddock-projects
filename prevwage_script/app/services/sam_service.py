@@ -2,7 +2,6 @@ import os
 import re
 import tempfile
 from typing import Optional, Dict, Any
-
 import requests
 from bs4 import BeautifulSoup
 from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
@@ -41,6 +40,8 @@ def search_sam_for_wd(
 ) -> Optional[Dict[str, Any]]:
     search_phrase = f"{state_name} {county_name} {construction_type}"
     print(f"[SAM] WD discovery search phrase: {search_phrase}")
+
+    expected_header = f"COUNTY: {county_name.upper()} IN {state_name.upper()}"
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
@@ -82,64 +83,137 @@ def search_sam_for_wd(
             result_text = page.locator("body").inner_text(timeout=10000)
             print(f"[SAM] Results page text sample: {result_text[:2000]}")
 
-            wd_number = None
-            wd_match = WD_NUMBER_RE.search(result_text)
-            if wd_match:
-                wd_number = wd_match.group(1)
-
-            detail_url = None
-            txt_url = None
+            # Gather candidate detail URLs
+            candidate_urls = []
+            seen = set()
 
             for a in page.locator("a").all():
                 try:
                     href = a.get_attribute("href")
-                    if href:
-                        if "/wage-determination/" in href and not detail_url:
-                            detail_url = href if href.startswith("http") else "https://sam.gov" + href
-                            print(f"[SAM] Found detail URL: {detail_url}")
-                        if TXT_LINK_RE.search(href) and not txt_url:
-                            txt_url = href
-                            print(f"[SAM] Found TXT URL: {txt_url}")
+                    if not href:
+                        continue
+
+                    if "/wage-determination/" in href:
+                        full_url = href if href.startswith("http") else "https://sam.gov" + href
+                        if full_url not in seen:
+                            seen.add(full_url)
+                            candidate_urls.append(full_url)
                 except Exception:
                     continue
 
-            if detail_url and not txt_url:
+            print(f"[SAM] Found {len(candidate_urls)} candidate WD URLs")
+
+            if not candidate_urls:
+                browser.close()
+                return None
+
+            # Try each candidate until one matches requested county/state
+            for candidate_url in candidate_urls[:10]:
+                print(f"[SAM] Checking candidate WD detail URL: {candidate_url}")
+
                 detail_page = browser.new_page()
-                detail_page.goto(detail_url, wait_until="networkidle", timeout=60000)
+                try:
+                    detail_page.goto(candidate_url, wait_until="networkidle", timeout=60000)
 
-                detail_text = detail_page.locator("body").inner_text(timeout=10000)
-                print(f"[SAM] Detail page text sample: {detail_text[:2000]}")
+                    detail_text = detail_page.locator("body").inner_text(timeout=10000)
+                    print(f"[SAM] Candidate detail page text sample: {detail_text[:1500]}")
 
-                if not wd_number:
+                    wd_number = None
                     wd_match = WD_NUMBER_RE.search(detail_text)
                     if wd_match:
                         wd_number = wd_match.group(1)
 
-                for a in detail_page.locator("a").all():
-                    try:
-                        href = a.get_attribute("href")
-                        if href and TXT_LINK_RE.search(href):
-                            txt_url = href
-                            print(f"[SAM] Found TXT URL on detail page: {txt_url}")
-                            break
-                    except Exception:
+                    txt_url = None
+
+                    # First try direct txt links already present
+                    for a in detail_page.locator("a").all():
+                        try:
+                            href = a.get_attribute("href")
+                            if href and TXT_LINK_RE.search(href):
+                                txt_url = href
+                                print(f"[SAM] Found TXT URL on detail page: {txt_url}")
+                                break
+                        except Exception:
+                            continue
+
+                    wd_text = None
+
+                    # If no direct txt link, click Download and capture text
+                    if not txt_url:
+                        download = None
+                        download_selectors = [
+                            lambda: detail_page.get_by_role("button", name=re.compile("download", re.I)).first,
+                            lambda: detail_page.get_by_role("link", name=re.compile("download", re.I)).first,
+                            lambda: detail_page.get_by_text(re.compile("download", re.I)).first,
+                        ]
+
+                        for selector_fn in download_selectors:
+                            try:
+                                candidate = selector_fn()
+                                candidate.wait_for(timeout=5000)
+
+                                with detail_page.expect_download(timeout=15000) as download_info:
+                                    candidate.click()
+                                download = download_info.value
+                                print("[SAM] Download button clicked successfully")
+                                break
+                            except Exception:
+                                continue
+
+                        if download is not None:
+                            with tempfile.TemporaryDirectory() as tmpdir:
+                                save_path = os.path.join(tmpdir, download.suggested_filename)
+                                download.save_as(save_path)
+
+                                with open(save_path, "r", encoding="utf-8", errors="replace") as f:
+                                    wd_text = f.read()
+                        else:
+                            print("[SAM] Could not trigger download for candidate")
+                            detail_page.close()
+                            continue
+                    else:
+                        resp = requests.get(txt_url, headers=HEADERS, timeout=30)
+                        resp.raise_for_status()
+                        wd_text = resp.text
+
+                    if not wd_text:
+                        detail_page.close()
                         continue
 
-                detail_page.close()
+                    # Validate county/state before accepting this WD
+                    wd_text_upper = wd_text.upper()
+
+                    if expected_header not in wd_text_upper:
+                        print(
+                            f"[SAM] Candidate rejected. Expected header '{expected_header}' not found."
+                        )
+                        detail_page.close()
+                        continue
+
+                    print(f"[SAM] Found matching WD for {county_name}, {state_name}")
+
+                    detail_page.close()
+                    browser.close()
+
+                    return {
+                        "wd_number": wd_number or f"UNKNOWN-{state_name[:2].upper()}-{county_name[:10].upper().replace(' ', '')}",
+                        "wd_title": f"{county_name}, {state_name} - {construction_type}",
+                        "source_url": txt_url or candidate_url,
+                        "detail_url": candidate_url,
+                        "effective_date": None,
+                    }
+
+                except Exception as exc:
+                    print(f"[SAM] Candidate check failed for {candidate_url}: {exc}")
+                    try:
+                        detail_page.close()
+                    except Exception:
+                        pass
+                    continue
 
             browser.close()
-
-            if not detail_url and not txt_url:
-                print("[SAM] No WD detail or TXT URL found")
-                return None
-
-            return {
-                "wd_number": wd_number or f"UNKNOWN-{state_name[:2].upper()}-{county_name[:10].upper().replace(' ', '')}",
-                "wd_title": f"{county_name}, {state_name} - {construction_type}",
-                "source_url": txt_url or detail_url,
-                "detail_url": detail_url,
-                "effective_date": None,
-            }
+            print(f"[SAM] No matching WD found for {county_name}, {state_name}")
+            return None
 
         except PlaywrightTimeoutError as exc:
             print(f"[SAM] Playwright timeout during WD discovery: {exc}")
