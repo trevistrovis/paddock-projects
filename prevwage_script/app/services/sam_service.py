@@ -32,6 +32,84 @@ DATE_RE = re.compile(
 WD_NUMBER_RE = re.compile(r"\b([A-Z]{2}\d{8})\b")
 TXT_LINK_RE = re.compile(r"\.txt($|\?)", re.IGNORECASE)
 
+def fill_autocomplete_field(page, aria_label: str, value: str, debug_name: str) -> bool:
+    try:
+        field = page.locator(f'input[aria-label="{aria_label}"]').first
+        field.wait_for(timeout=5000)
+
+        # Clear existing text and type desired value
+        field.click()
+        field.fill("")
+        field.fill(value)
+        page.wait_for_timeout(1500)
+
+        # Try to click the exact option from the dropdown
+        option_candidates = [
+            page.get_by_role("option", name=re.compile(f"^{re.escape(value)}$", re.I)).first,
+            page.get_by_text(re.compile(f"^{re.escape(value)}$", re.I)).first,
+            page.locator(f'text="{value}"').first,
+        ]
+
+        for option in option_candidates:
+            try:
+                option.wait_for(timeout=4000)
+                option.click(force=True)
+                page.wait_for_timeout(1000)
+                selected_value = field.input_value()
+                print(f"[SAM] Filled {debug_name} with exact match: {selected_value}")
+                return True
+            except Exception:
+                continue
+
+        # Fallback: if exact option click fails, try Enter only if the typed value stuck
+        field.press("Enter")
+        page.wait_for_timeout(1000)
+        selected_value = field.input_value()
+        print(f"[SAM] Fallback {debug_name} value after Enter: {selected_value}")
+
+        return selected_value.strip().lower() == value.strip().lower()
+
+    except Exception as exc:
+        print(f"[SAM] Failed to fill {debug_name}: {exc}")
+        return False
+
+def fill_autocomplete_field(page, aria_label: str, value: str, debug_name: str) -> bool:
+    try:
+        field = page.locator(f'input[aria-label="{aria_label}"]').first
+        field.wait_for(timeout=5000)
+
+        field.click()
+        field.fill("")
+        field.fill(value)
+        page.wait_for_timeout(1500)
+
+        option_candidates = [
+            page.get_by_role("option", name=re.compile(f"^{re.escape(value)}$", re.I)).first,
+            page.get_by_text(re.compile(f"^{re.escape(value)}$", re.I)).first,
+            page.locator(f'text="{value}"').first,
+        ]
+
+        for option in option_candidates:
+            try:
+                option.wait_for(timeout=4000)
+                option.click(force=True)
+                page.wait_for_timeout(1000)
+                selected_value = field.input_value()
+                print(f"[SAM] Filled {debug_name} with exact match: {selected_value}")
+                return selected_value.strip().lower() == value.strip().lower()
+            except Exception:
+                continue
+
+        field.press("Enter")
+        page.wait_for_timeout(1000)
+        selected_value = field.input_value()
+        print(f"[SAM] Fallback {debug_name} value after Enter: {selected_value}")
+        return selected_value.strip().lower() == value.strip().lower()
+
+    except Exception as exc:
+        print(f"[SAM] Failed to fill {debug_name}: {exc}")
+        return False
+
 
 def search_sam_for_wd(
     state_name: str,
@@ -76,7 +154,6 @@ def search_sam_for_wd(
             except Exception as exc:
                 print(f"[SAM] Could not read main text after DBA click: {exc}")
 
-            # Wait for likely form controls
             try:
                 page.locator("select, input").first.wait_for(timeout=15000)
             except Exception as exc:
@@ -84,7 +161,6 @@ def search_sam_for_wd(
                 browser.close()
                 return None
 
-            # Debug visible controls
             for i in range(min(page.locator("select").count(), 5)):
                 try:
                     select_text = page.locator("select").nth(i).text_content() or ""
@@ -105,49 +181,28 @@ def search_sam_for_wd(
                 except Exception:
                     pass
 
-            state_filled = False
-            county_filled = False
-            construction_filled = False
+            construction_label = construction_type.capitalize()
 
-            try:
-                state_input = page.locator('input[aria-label="wd-state"]').first
-                state_input.wait_for(timeout=5000)
-                state_input.fill(state_name)
-                page.wait_for_timeout(1000)
-                state_input.press("ArrowDown")
-                state_input.press("Enter")
-                state_filled = True
-                print(f"[SAM] Filled state with: {state_name}")
-                print(f"[SAM] State value now: {state_input.input_value()}")
-            except Exception as exc:
-                print(f"[SAM] Failed to fill state: {exc}")
+            state_filled = fill_autocomplete_field(
+                page,
+                aria_label="wd-state",
+                value=state_name,
+                debug_name="state",
+            )
 
-            try:
-                county_input = page.locator('input[aria-label="wd-county"]').first
-                county_input.wait_for(timeout=5000)
-                county_input.fill(county_name)
-                page.wait_for_timeout(1000)
-                county_input.press("ArrowDown")
-                county_input.press("Enter")
-                county_filled = True
-                print(f"[SAM] Filled county with: {county_name}")
-                print(f"[SAM] County value now: {county_input.input_value()}")
-            except Exception as exc:
-                print(f"[SAM] Failed to fill county: {exc}")
+            county_filled = fill_autocomplete_field(
+                page,
+                aria_label="wd-county",
+                value=county_name,
+                debug_name="county",
+            )
 
-            try:
-                construction_input = page.locator('input[aria-label="dba-construction-type"]').first
-                construction_input.wait_for(timeout=5000)
-                construction_label = construction_type.capitalize()
-                construction_input.fill(construction_label)
-                page.wait_for_timeout(1000)
-                construction_input.press("ArrowDown")
-                construction_input.press("Enter")
-                construction_filled = True
-                print(f"[SAM] Filled construction with: {construction_label}")
-                print(f"[SAM] Construction value now: {construction_input.input_value()}")
-            except Exception as exc:
-                print(f"[SAM] Failed to fill construction: {exc}")
+            construction_filled = fill_autocomplete_field(
+                page,
+                aria_label="dba-construction-type",
+                value=construction_label,
+                debug_name="construction",
+            )
 
             print(
                 f"[SAM] Fill status: "
@@ -190,7 +245,6 @@ def search_sam_for_wd(
                 browser.close()
                 return None
 
-            # Gather candidate WD links
             candidate_urls = []
             seen = set()
 
@@ -217,7 +271,6 @@ def search_sam_for_wd(
                 browser.close()
                 return None
 
-            # Validate each candidate by reading its TXT/detail content
             for candidate_url in candidate_urls[:10]:
                 print(f"[SAM] Checking candidate WD detail URL: {candidate_url}")
 
@@ -277,7 +330,6 @@ def search_sam_for_wd(
             print(f"[SAM] WD discovery failed: {exc}")
             browser.close()
             return None
-
 
 def fetch_wd_detail_from_sam(
     wd_number: str,
