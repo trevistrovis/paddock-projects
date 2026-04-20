@@ -52,7 +52,7 @@ def search_sam_for_wd(
             body_text = page.locator("body").inner_text(timeout=10000)
             print(f"[SAM] Landing page text sample: {body_text[:1500]}")
 
-            # Click DBA path
+            # Enter the DBA path
             pbo_locator = page.get_by_text("Public Buildings or Works", exact=False).first
             pbo_locator.wait_for(timeout=15000)
             pbo_locator.scroll_into_view_if_needed()
@@ -61,7 +61,6 @@ def search_sam_for_wd(
 
             print(f"[SAM] URL after DBA click: {page.url}")
 
-            # Do not try to read full body immediately; inspect controls
             select_count = page.locator("select").count()
             input_count = page.locator("input").count()
             button_count = page.locator("button").count()
@@ -85,7 +84,7 @@ def search_sam_for_wd(
                 browser.close()
                 return None
 
-            # Debug what controls exist
+            # Debug visible controls
             for i in range(min(page.locator("select").count(), 5)):
                 try:
                     select_text = page.locator("select").nth(i).text_content() or ""
@@ -93,7 +92,7 @@ def search_sam_for_wd(
                 except Exception:
                     pass
 
-            for i in range(min(page.locator("input").count(), 5)):
+            for i in range(min(page.locator("input").count(), 7)):
                 try:
                     inp = page.locator("input").nth(i)
                     placeholder = inp.get_attribute("placeholder")
@@ -110,31 +109,45 @@ def search_sam_for_wd(
             county_filled = False
             construction_filled = False
 
-            # Try selects first
-            for i in range(page.locator("select").count()):
-                sel = page.locator("select").nth(i)
-                try:
-                    options_text = (sel.text_content() or "").lower()
+            try:
+                state_input = page.locator('input[aria-label="wd-state"]').first
+                state_input.wait_for(timeout=5000)
+                state_input.fill(state_name)
+                page.wait_for_timeout(1000)
+                state_input.press("ArrowDown")
+                state_input.press("Enter")
+                state_filled = True
+                print(f"[SAM] Filled state with: {state_name}")
+                print(f"[SAM] State value now: {state_input.input_value()}")
+            except Exception as exc:
+                print(f"[SAM] Failed to fill state: {exc}")
 
-                    if not state_filled and state_name.lower()[:8] in options_text:
-                        sel.select_option(label=state_name)
-                        state_filled = True
-                        print(f"[SAM] Filled state using select[{i}]")
-                        continue
+            try:
+                county_input = page.locator('input[aria-label="wd-county"]').first
+                county_input.wait_for(timeout=5000)
+                county_input.fill(county_name)
+                page.wait_for_timeout(1000)
+                county_input.press("ArrowDown")
+                county_input.press("Enter")
+                county_filled = True
+                print(f"[SAM] Filled county with: {county_name}")
+                print(f"[SAM] County value now: {county_input.input_value()}")
+            except Exception as exc:
+                print(f"[SAM] Failed to fill county: {exc}")
 
-                    if not county_filled and county_name.lower()[:8] in options_text:
-                        sel.select_option(label=county_name)
-                        county_filled = True
-                        print(f"[SAM] Filled county using select[{i}]")
-                        continue
-
-                    if not construction_filled and construction_type.lower() in options_text:
-                        sel.select_option(label=construction_type.capitalize())
-                        construction_filled = True
-                        print(f"[SAM] Filled construction using select[{i}]")
-                        continue
-                except Exception:
-                    continue
+            try:
+                construction_input = page.locator('input[aria-label="dba-construction-type"]').first
+                construction_input.wait_for(timeout=5000)
+                construction_label = construction_type.capitalize()
+                construction_input.fill(construction_label)
+                page.wait_for_timeout(1000)
+                construction_input.press("ArrowDown")
+                construction_input.press("Enter")
+                construction_filled = True
+                print(f"[SAM] Filled construction with: {construction_label}")
+                print(f"[SAM] Construction value now: {construction_input.input_value()}")
+            except Exception as exc:
+                print(f"[SAM] Failed to fill construction: {exc}")
 
             print(
                 f"[SAM] Fill status: "
@@ -146,7 +159,8 @@ def search_sam_for_wd(
                 browser.close()
                 return None
 
-            # Submit search
+            page.wait_for_timeout(1500)
+
             submitted = False
             for locator in [
                 page.get_by_role("button", name=re.compile("search", re.I)).first,
@@ -203,7 +217,7 @@ def search_sam_for_wd(
                 browser.close()
                 return None
 
-            # Validate each candidate by reading its text/TXT and checking county/state
+            # Validate each candidate by reading its TXT/detail content
             for candidate_url in candidate_urls[:10]:
                 print(f"[SAM] Checking candidate WD detail URL: {candidate_url}")
 
