@@ -52,86 +52,101 @@ def search_sam_for_wd(
             body_text = page.locator("body").inner_text(timeout=10000)
             print(f"[SAM] Landing page text sample: {body_text[:1500]}")
 
-            # Step 1: explicitly enter the DBA path
-            page.get_by_text("Public Buildings or Works", exact=False).first.click(force=True, timeout=15000)
-            page.wait_for_timeout(3000)
+            # Click DBA path
+            pbo_locator = page.get_by_text("Public Buildings or Works", exact=False).first
+            pbo_locator.wait_for(timeout=15000)
+            pbo_locator.scroll_into_view_if_needed()
+            pbo_locator.click(force=True)
+            page.wait_for_timeout(5000)
 
-            # The SAM landing page shows that DBA and SCA are separate paths.
-            # After clicking Public Buildings or Works, wait for the structured search UI.
-            post_click_text = page.locator("body").inner_text(timeout=10000)
-            print(f"[SAM] After DBA click text sample: {post_click_text[:2000]}")
+            print(f"[SAM] URL after DBA click: {page.url}")
 
-            # Step 2: fill the structured fields, not a generic search box
-            # These selectors may need one round of tuning, so they log if absent.
+            # Do not try to read full body immediately; inspect controls
+            select_count = page.locator("select").count()
+            input_count = page.locator("input").count()
+            button_count = page.locator("button").count()
+
+            print(
+                f"[SAM] After DBA click counts: "
+                f"selects={select_count}, inputs={input_count}, buttons={button_count}"
+            )
+
+            try:
+                visible_text = page.locator("main").text_content(timeout=5000)
+                print(f"[SAM] Main text sample after DBA click: {(visible_text or '')[:1500]}")
+            except Exception as exc:
+                print(f"[SAM] Could not read main text after DBA click: {exc}")
+
+            # Wait for likely form controls
+            try:
+                page.locator("select, input").first.wait_for(timeout=15000)
+            except Exception as exc:
+                print(f"[SAM] No form controls appeared after DBA click: {exc}")
+                browser.close()
+                return None
+
+            # Debug what controls exist
+            for i in range(min(page.locator("select").count(), 5)):
+                try:
+                    select_text = page.locator("select").nth(i).text_content() or ""
+                    print(f"[SAM] Select[{i}] text sample: {select_text[:500]}")
+                except Exception:
+                    pass
+
+            for i in range(min(page.locator("input").count(), 5)):
+                try:
+                    inp = page.locator("input").nth(i)
+                    placeholder = inp.get_attribute("placeholder")
+                    aria_label = inp.get_attribute("aria-label")
+                    name = inp.get_attribute("name")
+                    print(
+                        f"[SAM] Input[{i}] "
+                        f"placeholder={placeholder} aria-label={aria_label} name={name}"
+                    )
+                except Exception:
+                    pass
+
             state_filled = False
             county_filled = False
             construction_filled = False
 
-            # STATE
-            for locator in [
-                page.get_by_label(re.compile("state", re.I)).first,
-                page.locator('select').nth(0),
-                page.locator('input[aria-label*="State"]').first,
-            ]:
+            # Try selects first
+            for i in range(page.locator("select").count()):
+                sel = page.locator("select").nth(i)
                 try:
-                    locator.wait_for(timeout=4000)
-                    try:
-                        locator.select_option(label=state_name)
-                    except Exception:
-                        locator.fill(state_name)
-                    state_filled = True
-                    print(f"[SAM] Filled state with: {state_name}")
-                    break
+                    options_text = (sel.text_content() or "").lower()
+
+                    if not state_filled and state_name.lower()[:8] in options_text:
+                        sel.select_option(label=state_name)
+                        state_filled = True
+                        print(f"[SAM] Filled state using select[{i}]")
+                        continue
+
+                    if not county_filled and county_name.lower()[:8] in options_text:
+                        sel.select_option(label=county_name)
+                        county_filled = True
+                        print(f"[SAM] Filled county using select[{i}]")
+                        continue
+
+                    if not construction_filled and construction_type.lower() in options_text:
+                        sel.select_option(label=construction_type.capitalize())
+                        construction_filled = True
+                        print(f"[SAM] Filled construction using select[{i}]")
+                        continue
                 except Exception:
                     continue
 
-            # COUNTY
-            for locator in [
-                page.get_by_label(re.compile("county", re.I)).first,
-                page.locator('select').nth(1),
-                page.locator('input[aria-label*="County"]').first,
-            ]:
-                try:
-                    locator.wait_for(timeout=4000)
-                    try:
-                        locator.select_option(label=county_name)
-                    except Exception:
-                        locator.fill(county_name)
-                    county_filled = True
-                    print(f"[SAM] Filled county with: {county_name}")
-                    break
-                except Exception:
-                    continue
-
-            # CONSTRUCTION TYPE
-            # Use your internal default, e.g. "building"
-            construction_label = construction_type.capitalize()
-            for locator in [
-                page.get_by_label(re.compile("construction", re.I)).first,
-                page.locator('select').nth(2),
-                page.locator('input[aria-label*="Construction"]').first,
-            ]:
-                try:
-                    locator.wait_for(timeout=4000)
-                    try:
-                        locator.select_option(label=construction_label)
-                    except Exception:
-                        locator.fill(construction_label)
-                    construction_filled = True
-                    print(f"[SAM] Filled construction type with: {construction_label}")
-                    break
-                except Exception:
-                    continue
+            print(
+                f"[SAM] Fill status: "
+                f"state={state_filled}, county={county_filled}, construction={construction_filled}"
+            )
 
             if not (state_filled and county_filled and construction_filled):
-                print(
-                    f"[SAM] Could not fill structured form completely. "
-                    f"state={state_filled}, county={county_filled}, construction={construction_filled}"
-                )
+                print("[SAM] Could not fill structured form completely")
                 browser.close()
                 return None
 
-            # Step 3: submit search
+            # Submit search
             submitted = False
             for locator in [
                 page.get_by_role("button", name=re.compile("search", re.I)).first,
@@ -141,6 +156,7 @@ def search_sam_for_wd(
                     locator.wait_for(timeout=4000)
                     locator.click(force=True)
                     submitted = True
+                    print("[SAM] Search submitted")
                     break
                 except Exception:
                     continue
@@ -151,10 +167,16 @@ def search_sam_for_wd(
                 return None
 
             page.wait_for_timeout(5000)
-            result_text = page.locator("body").inner_text(timeout=10000)
-            print(f"[SAM] Search results text sample: {result_text[:2500]}")
 
-            # Step 4: gather candidate WD links
+            try:
+                result_text = page.locator("body").inner_text(timeout=10000)
+                print(f"[SAM] Search results text sample: {result_text[:2500]}")
+            except Exception as exc:
+                print(f"[SAM] Could not read search results body text: {exc}")
+                browser.close()
+                return None
+
+            # Gather candidate WD links
             candidate_urls = []
             seen = set()
 
@@ -162,8 +184,10 @@ def search_sam_for_wd(
                 try:
                     href = a.get_attribute("href")
                     link_text = (a.inner_text() or "").strip()
+
                     if not href:
                         continue
+
                     if "/wage-determination/" in href:
                         full_url = href if href.startswith("http") else "https://sam.gov" + href
                         if full_url not in seen:
@@ -175,35 +199,57 @@ def search_sam_for_wd(
 
             print(f"[SAM] Found {len(candidate_urls)} candidate WD URLs")
 
-            # Step 5: validate each candidate by its TXT document
+            if not candidate_urls:
+                browser.close()
+                return None
+
+            # Validate each candidate by reading its text/TXT and checking county/state
             for candidate_url in candidate_urls[:10]:
                 print(f"[SAM] Checking candidate WD detail URL: {candidate_url}")
 
-                wd_data = fetch_wd_detail_from_sam(
-                    wd_number="UNKNOWN",
-                    wd_url=candidate_url,
-                )
-                if not wd_data:
+                try:
+                    wd_data = fetch_wd_detail_from_sam(
+                        wd_number="UNKNOWN",
+                        wd_url=candidate_url,
+                    )
+
+                    if not wd_data:
+                        continue
+
+                    wd_text = wd_data.get("text", "")
+                    if not wd_text:
+                        continue
+
+                    wd_text_upper = wd_text.upper()
+
+                    if expected_header not in wd_text_upper:
+                        print(
+                            f"[SAM] Candidate rejected. "
+                            f"Expected header '{expected_header}' not found."
+                        )
+                        continue
+
+                    wd_match = WD_NUMBER_RE.search(wd_text_upper)
+                    wd_number = (
+                        wd_match.group(1)
+                        if wd_match
+                        else f"UNKNOWN-{state_name[:2].upper()}-{county_name[:10].upper().replace(' ', '')}"
+                    )
+
+                    print(f"[SAM] Found matching WD for {county_name}, {state_name}")
+
+                    browser.close()
+                    return {
+                        "wd_number": wd_number,
+                        "wd_title": f"{county_name}, {state_name} - {construction_type}",
+                        "source_url": candidate_url,
+                        "detail_url": candidate_url,
+                        "effective_date": None,
+                    }
+
+                except Exception as exc:
+                    print(f"[SAM] Candidate check failed for {candidate_url}: {exc}")
                     continue
-
-                wd_text = wd_data.get("text", "").upper()
-                if expected_header not in wd_text:
-                    print(f"[SAM] Candidate rejected. Expected header '{expected_header}' not found.")
-                    continue
-
-                wd_match = WD_NUMBER_RE.search(wd_text)
-                wd_number = wd_match.group(1) if wd_match else f"UNKNOWN-{state_name[:2].upper()}-{county_name[:10].upper().replace(' ', '')}"
-
-                print(f"[SAM] Found matching WD for {county_name}, {state_name}")
-
-                browser.close()
-                return {
-                    "wd_number": wd_number,
-                    "wd_title": f"{county_name}, {state_name} - {construction_type}",
-                    "source_url": candidate_url,   # fetch_wd_detail_from_sam will convert this via Download if needed
-                    "detail_url": candidate_url,
-                    "effective_date": None,
-                }
 
             browser.close()
             print(f"[SAM] No matching WD found for {county_name}, {state_name}")
@@ -238,10 +284,15 @@ def fetch_wd_detail_from_sam(
         resp = requests.get(wd_url, headers=HEADERS, timeout=30)
         resp.raise_for_status()
 
+        text = resp.text
+        if not text.strip():
+            print("[SAM] Direct TXT response was empty")
+            return None
+
         return {
             "wd_number": wd_number,
             "wd_url": wd_url,
-            "text": resp.text,
+            "text": text,
             "title": wd_number,
         }
 
@@ -254,7 +305,8 @@ def fetch_wd_detail_from_sam(
         page = context.new_page()
 
         try:
-            page.goto(wd_url, wait_until="networkidle", timeout=60000)
+            page.goto(wd_url, wait_until="domcontentloaded", timeout=60000)
+            page.wait_for_timeout(3000)
 
             body_text = page.locator("body").inner_text(timeout=10000)
             print(f"[SAM] Detail page text sample: {body_text[:1500]}")
@@ -274,7 +326,7 @@ def fetch_wd_detail_from_sam(
                     candidate.wait_for(timeout=5000)
 
                     with page.expect_download(timeout=15000) as download_info:
-                        candidate.click()
+                        candidate.click(force=True)
                     download = download_info.value
                     print("[SAM] Download button clicked successfully")
                     break
@@ -285,6 +337,7 @@ def fetch_wd_detail_from_sam(
             if download is None:
                 print("[SAM] No direct download event; scanning page links for .txt")
                 txt_href = None
+
                 for a in page.locator("a").all():
                     try:
                         href = a.get_attribute("href")
@@ -298,7 +351,11 @@ def fetch_wd_detail_from_sam(
                     print(f"[SAM] Found TXT href in page: {txt_href}")
                     resp = requests.get(txt_href, headers=HEADERS, timeout=30)
                     resp.raise_for_status()
+
                     text = resp.text
+                    if not text.strip():
+                        print("[SAM] TXT href response was empty")
+                        return None
 
                     return {
                         "wd_number": wd_number,
@@ -311,12 +368,18 @@ def fetch_wd_detail_from_sam(
                 return None
 
             # Save download to temp path and read it
+            print(f"[SAM] Downloaded file: {download.suggested_filename}")
+
             with tempfile.TemporaryDirectory() as tmpdir:
                 save_path = os.path.join(tmpdir, download.suggested_filename)
                 download.save_as(save_path)
 
                 with open(save_path, "r", encoding="utf-8", errors="replace") as f:
                     text = f.read()
+
+            if not text.strip():
+                print("[SAM] Downloaded file was empty")
+                return None
 
             return {
                 "wd_number": wd_number,
