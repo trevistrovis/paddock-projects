@@ -279,7 +279,7 @@ def search_sam_for_wd(
                 except Exception:
                     pass
 
-            # Keep the earlier version that worked for state/county
+            # State selection: keep your existing helper if it's working
             state_filled = fill_autocomplete_field(
                 page,
                 aria_label="wd-state",
@@ -287,6 +287,7 @@ def search_sam_for_wd(
                 debug_name="state",
             )
 
+            # County selection: exact county option, but SAM lists counties without "County"
             county_filled = select_exact_county_option(
                 page,
                 county_name=county_name,
@@ -349,6 +350,7 @@ def search_sam_for_wd(
 
             page.wait_for_timeout(1500)
 
+            # Submit search
             submitted = False
             for locator in [
                 page.get_by_role("button", name=re.compile("search", re.I)).first,
@@ -378,60 +380,53 @@ def search_sam_for_wd(
                 browser.close()
                 return None
 
-            candidate_rows = []
+            # Prefer the filtered result if the page narrowed correctly
+            if "Showing 1 - 1 of 1 results" in result_text:
+                print("[SAM] Search narrowed to exactly 1 result")
+
+            result_url = None
+            result_label = None
+
             links = page.locator('a[href*="/wage-determination/"]')
             link_count = links.count()
+            print(f"[SAM] WD result link count on page: {link_count}")
 
             for i in range(link_count):
                 try:
                     link = links.nth(i)
                     href = link.get_attribute("href")
-                    link_text = (link.inner_text() or "").strip()
+                    text = (link.inner_text() or "").strip()
 
-                    if not href:
+                    if not href or not text:
                         continue
 
-                    full_url = href if href.startswith("http") else "https://sam.gov" + href
+                    wd_match = WD_NUMBER_RE.search(text.upper())
+                    if not wd_match:
+                        continue
 
-                    row_text = ""
-                    try:
-                        row_text = (
-                            link.locator("xpath=ancestor::*[self::div or self::article][1]")
-                            .inner_text(timeout=3000)
-                        )
-                    except Exception:
-                        try:
-                            row_text = link.locator("xpath=ancestor::*[1]").inner_text(timeout=3000)
-                        except Exception:
-                            row_text = link_text
-
-                    candidate_rows.append({
-                        "wd_number": link_text,
-                        "url": full_url,
-                        "text": row_text,
-                    })
-
-                    print(f"[SAM] Candidate WD link: text='{link_text}' url='{full_url}'")
-                    print(f"[SAM] Candidate WD row text sample: {row_text[:500]}")
+                    result_url = href if href.startswith("http") else "https://sam.gov" + href
+                    result_label = text
+                    print(f"[SAM] Selected visible filtered WD result: {result_label} -> {result_url}")
+                    break
 
                 except Exception:
                     continue
 
-            print(f"[SAM] Found {len(candidate_rows)} candidate WD URLs")
-
             browser.close()
 
-            if not candidate_rows:
-                print("[SAM] No candidate WD URLs found")
+            if not result_url:
+                print("[SAM] No filtered WD result found")
                 return None
 
+            wd_match = WD_NUMBER_RE.search(result_label.upper())
+            wd_number = wd_match.group(1) if wd_match else "UNKNOWN"
+
             return {
-                "wd_number": "CANDIDATES",
-                "wd_title": f"{county_name}, {state_name} - Building",
-                "source_url": None,
-                "detail_url": None,
+                "wd_number": wd_number,
+                "wd_title": result_label,
+                "source_url": result_url,
+                "detail_url": result_url,
                 "effective_date": None,
-                "candidates": [row["url"] for row in candidate_rows[:10]],
             }
 
         except PlaywrightTimeoutError as exc:
