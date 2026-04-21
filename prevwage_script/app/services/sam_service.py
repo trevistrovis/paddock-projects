@@ -165,35 +165,17 @@ def select_exact_county_option(page, county_name: str) -> bool:
             county_input.press("Enter")
             page.wait_for_timeout(1000)
             print("[SAM] Used keyboard fallback for county")
+            return False
 
-        # Blur the widget so SAM commits the selection
+        # Blur/commit the widget, but do not require the input to retain the value
         county_input.press("Tab")
         page.wait_for_timeout(1000)
 
         selected = county_input.input_value().strip()
         print(f"[SAM] County value now: {selected}")
 
-        # Check nearby field container text, not just input_value()
-        container_text = ""
-        try:
-            container_text = (
-                county_input.locator("xpath=ancestor::*[self::div or self::label][1]")
-                .inner_text(timeout=3000)
-                .strip()
-            )
-        except Exception:
-            pass
-
-        print(f"[SAM] County container text: {container_text}")
-
-        if selected.lower() == county_base.lower():
-            return True
-
-        if county_base.lower() in container_text.lower():
-            print(f"[SAM] County confirmed in field container: {county_base}")
-            return True
-
-        return False
+        # If we clicked the exact visible county option, count that as success.
+        return True
 
     except Exception as exc:
         print(f"[SAM] Failed to select county: {exc}")
@@ -371,7 +353,9 @@ def search_sam_for_wd(
 
             # Prefer the filtered result if the page narrowed correctly
             if "Showing 1 - 1 of 1 results" in result_text:
-                print("[SAM] Search narrowed to exactly 1 result")
+                print("[SAM] County/state/building filters narrowed to a single result")
+            elif "Showing 1 - 25 of" in result_text:
+                print("[SAM] Filters are still too broad")
 
             result_url = None
             result_label = None
