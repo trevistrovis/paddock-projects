@@ -136,10 +136,9 @@ def fill_autocomplete_field(page, aria_label: str, value: str, debug_name: str) 
 def search_sam_for_wd(
     state_name: str,
     county_name: str,
-    construction_type: str,
+    construction_type: str,  # ignored; Building is hardcoded below
 ) -> Optional[Dict[str, Any]]:
-    expected_header = f"COUNTY: {county_name.upper()} IN {state_name.upper()}"
-    print(f"[SAM] WD discovery target: {county_name}, {state_name}, {construction_type}")
+    print(f"[SAM] WD discovery target: {county_name}, {state_name}, Building")
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
@@ -218,7 +217,7 @@ def search_sam_for_wd(
                 debug_name="county",
             )
 
-            # Replace only construction with a hardcoded Building flow
+            # Hardcode construction to Building
             construction_filled = False
             try:
                 construction_input = page.locator('input[aria-label="dba-construction-type"]').first
@@ -319,67 +318,35 @@ def search_sam_for_wd(
                         full_url = href if href.startswith("http") else "https://sam.gov" + href
                         if full_url not in seen:
                             seen.add(full_url)
-                            candidate_urls.append(full_url)
+                            candidate_urls.append((link_text, full_url))
                             print(f"[SAM] Candidate WD link: text='{link_text}' url='{full_url}'")
                 except Exception:
                     continue
 
             print(f"[SAM] Found {len(candidate_urls)} candidate WD URLs")
 
+            browser.close()
+
             if not candidate_urls:
-                browser.close()
+                print("[SAM] No candidate WD URLs found")
                 return None
 
-            for candidate_url in candidate_urls[:10]:
-                print(f"[SAM] Checking candidate WD detail URL: {candidate_url}")
+            # IMPORTANT: do not validate candidates here.
+            # fetch_and_store_wage_from_sam() will fetch/validate the returned URL later.
+            first_text, first_url = candidate_urls[0]
 
-                try:
-                    wd_data = fetch_wd_detail_from_sam(
-                        wd_number="UNKNOWN",
-                        wd_url=candidate_url,
-                    )
+            wd_match = WD_NUMBER_RE.search(first_text.upper())
+            wd_number = wd_match.group(1) if wd_match else "UNKNOWN"
 
-                    if not wd_data:
-                        continue
+            print(f"[SAM] Returning first candidate WD: {wd_number} -> {first_url}")
 
-                    wd_text = wd_data.get("text", "")
-                    if not wd_text:
-                        continue
-
-                    wd_text_upper = wd_text.upper()
-
-                    if expected_header not in wd_text_upper:
-                        print(
-                            f"[SAM] Candidate rejected. "
-                            f"Expected header '{expected_header}' not found."
-                        )
-                        continue
-
-                    wd_match = WD_NUMBER_RE.search(wd_text_upper)
-                    wd_number = (
-                        wd_match.group(1)
-                        if wd_match
-                        else f"UNKNOWN-{state_name[:2].upper()}-{county_name[:10].upper().replace(' ', '')}"
-                    )
-
-                    print(f"[SAM] Found matching WD for {county_name}, {state_name}")
-
-                    browser.close()
-                    return {
-                        "wd_number": wd_number,
-                        "wd_title": f"{county_name}, {state_name} - Building",
-                        "source_url": candidate_url,
-                        "detail_url": candidate_url,
-                        "effective_date": None,
-                    }
-
-                except Exception as exc:
-                    print(f"[SAM] Candidate check failed for {candidate_url}: {exc}")
-                    continue
-
-            browser.close()
-            print(f"[SAM] No matching WD found for {county_name}, {state_name}")
-            return None
+            return {
+                "wd_number": wd_number,
+                "wd_title": first_text or f"{county_name}, {state_name} - Building",
+                "source_url": first_url,
+                "detail_url": first_url,
+                "effective_date": None,
+            }
 
         except PlaywrightTimeoutError as exc:
             print(f"[SAM] Playwright timeout during WD discovery: {exc}")
