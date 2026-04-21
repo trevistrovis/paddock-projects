@@ -136,9 +136,10 @@ def fill_autocomplete_field(page, aria_label: str, value: str, debug_name: str) 
 def search_sam_for_wd(
     state_name: str,
     county_name: str,
-    construction_type: str,  # ignored
+    construction_type: str,
 ) -> Optional[Dict[str, Any]]:
-    print(f"[SAM] WD discovery target: {county_name}, {state_name}, Building")
+    expected_header = f"COUNTY: {county_name.upper()} IN {state_name.upper()}"
+    print(f"[SAM] WD discovery target: {county_name}, {state_name}, {construction_type}")
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
@@ -148,96 +149,107 @@ def search_sam_for_wd(
             page.goto(SAM_BASE_URL, wait_until="domcontentloaded", timeout=60000)
             page.wait_for_timeout(3000)
 
-            print("[SAM] Loaded landing page")
+            body_text = page.locator("body").inner_text(timeout=10000)
+            print(f"[SAM] Landing page text sample: {body_text[:1500]}")
 
-            # Step 1: Click DBA path
+            # Enter the DBA path
             pbo_locator = page.get_by_text("Public Buildings or Works", exact=False).first
             pbo_locator.wait_for(timeout=15000)
+            pbo_locator.scroll_into_view_if_needed()
             pbo_locator.click(force=True)
             page.wait_for_timeout(5000)
 
             print(f"[SAM] URL after DBA click: {page.url}")
 
-            # Debug counts
-            print(f"[SAM] wd-state count: {page.locator('input[aria-label=\"wd-state\"]').count()}")
-            print(f"[SAM] wd-county count: {page.locator('input[aria-label=\"wd-county\"]').count()}")
-            print(f"[SAM] dba-construction-type count: {page.locator('input[aria-label=\"dba-construction-type\"]').count()}")
+            select_count = page.locator("select").count()
+            input_count = page.locator("input").count()
+            button_count = page.locator("button").count()
 
-            # -----------------------
-            # STATE
-            # -----------------------
-            state_filled = False
+            print(
+                f"[SAM] After DBA click counts: "
+                f"selects={select_count}, inputs={input_count}, buttons={button_count}"
+            )
+
             try:
-                state_input = page.locator('input[aria-label="wd-state"]').first
-                state_input.wait_for(state="attached", timeout=15000)
-                state_input.scroll_into_view_if_needed()
-                state_input.click(force=True)
-                state_input.fill("")
-                state_input.fill(state_name)
-                page.wait_for_timeout(1500)
-
-                page.get_by_text(re.compile(rf"^{re.escape(state_name)}$", re.I)).first.click(force=True, timeout=5000)
-                page.wait_for_timeout(1000)
-
-                selected = state_input.input_value()
-                print(f"[SAM] State value now: {selected}")
-                state_filled = selected.strip().lower() == state_name.lower()
+                visible_text = page.locator("main").text_content(timeout=5000)
+                print(f"[SAM] Main text sample after DBA click: {(visible_text or '')[:1500]}")
             except Exception as exc:
-                print(f"[SAM] Failed to fill state: {exc}")
+                print(f"[SAM] Could not read main text after DBA click: {exc}")
 
-            # -----------------------
-            # COUNTY
-            # -----------------------
-            county_filled = False
             try:
-                county_input = page.locator('input[aria-label="wd-county"]').first
-                county_input.wait_for(state="attached", timeout=15000)
-                county_input.scroll_into_view_if_needed()
-                county_input.click(force=True)
-                county_input.fill("")
-                county_input.fill(county_name)
-                page.wait_for_timeout(1500)
+                page.locator("select, input").first.wait_for(timeout=15000)
+            except Exception as exc:
+                print(f"[SAM] No form controls appeared after DBA click: {exc}")
+                browser.close()
+                return None
 
+            for i in range(min(page.locator("select").count(), 5)):
                 try:
-                    page.get_by_text(re.compile(rf"^{re.escape(county_name)}$", re.I)).first.click(force=True, timeout=5000)
+                    select_text = page.locator("select").nth(i).text_content() or ""
+                    print(f"[SAM] Select[{i}] text sample: {select_text[:500]}")
                 except Exception:
-                    county_base = county_name.replace(" County", "")
-                    page.get_by_text(re.compile(rf"^{re.escape(county_base)}$", re.I)).first.click(force=True, timeout=5000)
+                    pass
 
-                page.wait_for_timeout(1000)
+            for i in range(min(page.locator("input").count(), 7)):
+                try:
+                    inp = page.locator("input").nth(i)
+                    placeholder = inp.get_attribute("placeholder")
+                    aria_label = inp.get_attribute("aria-label")
+                    name = inp.get_attribute("name")
+                    print(
+                        f"[SAM] Input[{i}] "
+                        f"placeholder={placeholder} aria-label={aria_label} name={name}"
+                    )
+                except Exception:
+                    pass
 
-                selected = county_input.input_value()
-                print(f"[SAM] County value now: {selected}")
-                county_filled = county_name.replace(" County", "").lower() in selected.lower()
-            except Exception as exc:
-                print(f"[SAM] Failed to fill county: {exc}")
+            # Keep the earlier version that worked for state/county
+            state_filled = fill_autocomplete_field(
+                page,
+                aria_label="wd-state",
+                value=state_name,
+                debug_name="state",
+            )
 
-            # -----------------------
-            # CONSTRUCTION (HARDCODED)
-            # -----------------------
+            county_filled = fill_autocomplete_field(
+                page,
+                aria_label="wd-county",
+                value=county_name,
+                debug_name="county",
+            )
+
+            # Replace only construction with a hardcoded Building flow
             construction_filled = False
             try:
                 construction_input = page.locator('input[aria-label="dba-construction-type"]').first
-                construction_input.wait_for(state="attached", timeout=15000)
-                construction_input.scroll_into_view_if_needed()
-                construction_input.click(force=True)
+                construction_input.wait_for(timeout=5000)
+                construction_input.click()
                 construction_input.fill("")
                 construction_input.fill("Building")
                 page.wait_for_timeout(1500)
 
-                clicked = False
+                option_clicked = False
+
                 for option in page.locator('[role="option"]').all():
                     try:
                         text = (option.inner_text() or "").strip()
                         if text.lower() == "building":
                             option.click(force=True)
-                            clicked = True
+                            option_clicked = True
                             print("[SAM] Clicked construction option: Building")
                             break
                     except Exception:
                         continue
 
-                if not clicked:
+                if not option_clicked:
+                    try:
+                        page.get_by_text(re.compile(r"^Building$", re.I)).first.click(force=True)
+                        option_clicked = True
+                        print("[SAM] Clicked construction text: Building")
+                    except Exception:
+                        pass
+
+                if not option_clicked:
                     construction_input.press("ArrowDown")
                     page.wait_for_timeout(500)
                     construction_input.press("Enter")
@@ -247,10 +259,10 @@ def search_sam_for_wd(
                 selected = construction_input.input_value()
                 print(f"[SAM] Construction selected: {selected}")
                 construction_filled = selected.strip().lower() == "building"
+
             except Exception as exc:
                 print(f"[SAM] Failed to fill construction: {exc}")
 
-            # -----------------------
             print(
                 f"[SAM] Fill status: "
                 f"state={state_filled}, county={county_filled}, construction={construction_filled}"
@@ -261,9 +273,8 @@ def search_sam_for_wd(
                 browser.close()
                 return None
 
-            # -----------------------
-            # SUBMIT SEARCH
-            # -----------------------
+            page.wait_for_timeout(1500)
+
             submitted = False
             for locator in [
                 page.get_by_role("button", name=re.compile("search", re.I)).first,
@@ -279,60 +290,103 @@ def search_sam_for_wd(
                     continue
 
             if not submitted:
-                print("[SAM] Could not submit search")
+                print("[SAM] Could not submit DBA structured search")
                 browser.close()
                 return None
 
             page.wait_for_timeout(5000)
 
-            result_text = page.locator("body").inner_text(timeout=10000)
-            print(f"[SAM] Search results text sample: {result_text[:2000]}")
+            try:
+                result_text = page.locator("body").inner_text(timeout=10000)
+                print(f"[SAM] Search results text sample: {result_text[:2500]}")
+            except Exception as exc:
+                print(f"[SAM] Could not read search results body text: {exc}")
+                browser.close()
+                return None
 
-            # -----------------------
-            # COLLECT WD LINKS
-            # -----------------------
             candidate_urls = []
             seen = set()
 
             for a in page.locator("a").all():
                 try:
                     href = a.get_attribute("href")
-                    text = (a.inner_text() or "").strip()
+                    link_text = (a.inner_text() or "").strip()
 
-                    if href and "/wage-determination/" in href:
+                    if not href:
+                        continue
+
+                    if "/wage-determination/" in href:
                         full_url = href if href.startswith("http") else "https://sam.gov" + href
                         if full_url not in seen:
                             seen.add(full_url)
-                            candidate_urls.append((text, full_url))
-                            print(f"[SAM] Candidate WD: {full_url}")
+                            candidate_urls.append(full_url)
+                            print(f"[SAM] Candidate WD link: text='{link_text}' url='{full_url}'")
                 except Exception:
                     continue
 
-            browser.close()
+            print(f"[SAM] Found {len(candidate_urls)} candidate WD URLs")
 
             if not candidate_urls:
-                print("[SAM] No candidate WD URLs found")
+                browser.close()
                 return None
 
-            first_text, first_url = candidate_urls[0]
+            for candidate_url in candidate_urls[:10]:
+                print(f"[SAM] Checking candidate WD detail URL: {candidate_url}")
 
-            wd_match = WD_NUMBER_RE.search(first_text)
-            wd_number = wd_match.group(1) if wd_match else "UNKNOWN"
+                try:
+                    wd_data = fetch_wd_detail_from_sam(
+                        wd_number="UNKNOWN",
+                        wd_url=candidate_url,
+                    )
 
-            return {
-                "wd_number": wd_number,
-                "wd_title": first_text or f"{county_name}, {state_name} - Building",
-                "source_url": first_url,
-                "detail_url": first_url,
-                "effective_date": None,
-            }
+                    if not wd_data:
+                        continue
+
+                    wd_text = wd_data.get("text", "")
+                    if not wd_text:
+                        continue
+
+                    wd_text_upper = wd_text.upper()
+
+                    if expected_header not in wd_text_upper:
+                        print(
+                            f"[SAM] Candidate rejected. "
+                            f"Expected header '{expected_header}' not found."
+                        )
+                        continue
+
+                    wd_match = WD_NUMBER_RE.search(wd_text_upper)
+                    wd_number = (
+                        wd_match.group(1)
+                        if wd_match
+                        else f"UNKNOWN-{state_name[:2].upper()}-{county_name[:10].upper().replace(' ', '')}"
+                    )
+
+                    print(f"[SAM] Found matching WD for {county_name}, {state_name}")
+
+                    browser.close()
+                    return {
+                        "wd_number": wd_number,
+                        "wd_title": f"{county_name}, {state_name} - Building",
+                        "source_url": candidate_url,
+                        "detail_url": candidate_url,
+                        "effective_date": None,
+                    }
+
+                except Exception as exc:
+                    print(f"[SAM] Candidate check failed for {candidate_url}: {exc}")
+                    continue
+
+            browser.close()
+            print(f"[SAM] No matching WD found for {county_name}, {state_name}")
+            return None
 
         except PlaywrightTimeoutError as exc:
-            print(f"[SAM] Timeout: {exc}")
+            print(f"[SAM] Playwright timeout during WD discovery: {exc}")
             browser.close()
             return None
         except Exception as exc:
-            print(f"[SAM] Failure: {exc}")
+            print(f"[SAM] WD discovery failed: {exc}")
             browser.close()
             return None
 
