@@ -32,6 +32,13 @@ DATE_RE = re.compile(
 WD_NUMBER_RE = re.compile(r"\b([A-Z]{2}\d{8})\b")
 TXT_LINK_RE = re.compile(r"\.txt($|\?)", re.IGNORECASE)
 
+CONSTRUCTION_LABELS = {
+    "building": "Building",
+    "heavy": "Heavy",
+    "highway": "Highway",
+    "residential": "Residential",
+}
+
 def fill_autocomplete_field(page, aria_label: str, value: str, debug_name: str) -> bool:
     try:
         field = page.locator(f'input[aria-label="{aria_label}"]').first
@@ -78,33 +85,48 @@ def fill_autocomplete_field(page, aria_label: str, value: str, debug_name: str) 
         field = page.locator(f'input[aria-label="{aria_label}"]').first
         field.wait_for(timeout=5000)
 
-        field.click()
-        field.fill("")
-        field.fill(value)
-        page.wait_for_timeout(1500)
+        def try_value(candidate_value: str) -> bool:
+            field.click()
+            field.fill("")
+            field.fill(candidate_value)
+            page.wait_for_timeout(1500)
 
-        option_candidates = [
-            page.get_by_role("option", name=re.compile(f"^{re.escape(value)}$", re.I)).first,
-            page.get_by_text(re.compile(f"^{re.escape(value)}$", re.I)).first,
-            page.locator(f'text="{value}"').first,
-        ]
+            option_candidates = [
+                page.get_by_role("option", name=re.compile(f"^{re.escape(candidate_value)}$", re.I)).first,
+                page.get_by_text(re.compile(f"^{re.escape(candidate_value)}$", re.I)).first,
+                page.locator(f'text="{candidate_value}"').first,
+            ]
 
-        for option in option_candidates:
-            try:
-                option.wait_for(timeout=4000)
-                option.click(force=True)
-                page.wait_for_timeout(1000)
-                selected_value = field.input_value()
-                print(f"[SAM] Filled {debug_name} with exact match: {selected_value}")
-                return selected_value.strip().lower() == value.strip().lower()
-            except Exception:
-                continue
+            for option in option_candidates:
+                try:
+                    option.wait_for(timeout=4000)
+                    option.click(force=True)
+                    page.wait_for_timeout(1000)
+                    selected_value = field.input_value()
+                    print(f"[SAM] Filled {debug_name} with exact match: {selected_value}")
+                    return selected_value.strip().lower() == candidate_value.strip().lower()
+                except Exception:
+                    continue
 
-        field.press("Enter")
-        page.wait_for_timeout(1000)
-        selected_value = field.input_value()
-        print(f"[SAM] Fallback {debug_name} value after Enter: {selected_value}")
-        return selected_value.strip().lower() == value.strip().lower()
+            field.press("Enter")
+            page.wait_for_timeout(1000)
+            selected_value = field.input_value()
+            print(f"[SAM] Fallback {debug_name} value after Enter: {selected_value}")
+            return selected_value.strip().lower() == candidate_value.strip().lower()
+
+        candidate_values = [value]
+
+        if debug_name == "construction":
+            extras = ["Building", "Heavy", "Highway", "Residential"]
+            for extra in extras:
+                if extra not in candidate_values:
+                    candidate_values.append(extra)
+
+        for candidate_value in candidate_values:
+            if try_value(candidate_value):
+                return True
+
+        return False
 
     except Exception as exc:
         print(f"[SAM] Failed to fill {debug_name}: {exc}")
@@ -181,7 +203,7 @@ def search_sam_for_wd(
                 except Exception:
                     pass
 
-            construction_label = construction_type.capitalize()
+            construction_label = CONSTRUCTION_LABELS.get(construction_type.lower(), construction_type)
 
             state_filled = fill_autocomplete_field(
                 page,
