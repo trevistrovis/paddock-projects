@@ -303,48 +303,102 @@ def search_sam_for_wd(
                 browser.close()
                 return None
 
-            candidate_urls = []
-            seen = set()
+            candidate_rows = []
+            links = page.locator('a[href*="/wage-determination/"]')
+            link_count = links.count()
 
-            for a in page.locator("a").all():
+            for i in range(link_count):
                 try:
-                    href = a.get_attribute("href")
-                    link_text = (a.inner_text() or "").strip()
+                    link = links.nth(i)
+                    href = link.get_attribute("href")
+                    link_text = (link.inner_text() or "").strip()
 
                     if not href:
                         continue
 
-                    if "/wage-determination/" in href:
-                        full_url = href if href.startswith("http") else "https://sam.gov" + href
-                        if full_url not in seen:
-                            seen.add(full_url)
-                            candidate_urls.append((link_text, full_url))
-                            print(f"[SAM] Candidate WD link: text='{link_text}' url='{full_url}'")
+                    full_url = href if href.startswith("http") else "https://sam.gov" + href
+
+                    row_text = ""
+                    try:
+                        row_text = (
+                            link.locator("xpath=ancestor::*[self::div or self::article][1]")
+                            .inner_text(timeout=3000)
+                        )
+                    except Exception:
+                        try:
+                            row_text = link.locator("xpath=ancestor::*[1]").inner_text(timeout=3000)
+                        except Exception:
+                            row_text = link_text
+
+                    candidate_rows.append({
+                        "wd_number": link_text,
+                        "url": full_url,
+                        "text": row_text,
+                    })
+
+                    print(f"[SAM] Candidate WD link: text='{link_text}' url='{full_url}'")
+                    print(f"[SAM] Candidate WD row text sample: {row_text[:500]}")
+
                 except Exception:
                     continue
 
-            print(f"[SAM] Found {len(candidate_urls)} candidate WD URLs")
+            print(f"[SAM] Found {len(candidate_rows)} candidate WD URLs")
 
             browser.close()
 
-            if not candidate_urls:
+            if not candidate_rows:
                 print("[SAM] No candidate WD URLs found")
                 return None
 
-            # IMPORTANT: do not validate candidates here.
-            # fetch_and_store_wage_from_sam() will fetch/validate the returned URL later.
-            first_text, first_url = candidate_urls[0]
+            county_base = county_name.replace(" County", "").lower()
 
-            wd_match = WD_NUMBER_RE.search(first_text.upper())
+            # Prefer county + state + building
+            for candidate in candidate_rows:
+                row_text_lower = candidate["text"].lower()
+                if (
+                    county_base in row_text_lower
+                    and state_name.lower() in row_text_lower
+                    and "building" in row_text_lower
+                ):
+                    wd_match = WD_NUMBER_RE.search(candidate["wd_number"].upper())
+                    wd_number = wd_match.group(1) if wd_match else "UNKNOWN"
+
+                    print(f"[SAM] Returning county/state/building matched candidate WD: {wd_number} -> {candidate['url']}")
+                    return {
+                        "wd_number": wd_number,
+                        "wd_title": candidate["wd_number"] or f"{county_name}, {state_name} - Building",
+                        "source_url": candidate["url"],
+                        "detail_url": candidate["url"],
+                        "effective_date": None,
+                    }
+
+            # Then county + state
+            for candidate in candidate_rows:
+                row_text_lower = candidate["text"].lower()
+                if county_base in row_text_lower and state_name.lower() in row_text_lower:
+                    wd_match = WD_NUMBER_RE.search(candidate["wd_number"].upper())
+                    wd_number = wd_match.group(1) if wd_match else "UNKNOWN"
+
+                    print(f"[SAM] Returning county/state matched candidate WD: {wd_number} -> {candidate['url']}")
+                    return {
+                        "wd_number": wd_number,
+                        "wd_title": candidate["wd_number"] or f"{county_name}, {state_name} - Building",
+                        "source_url": candidate["url"],
+                        "detail_url": candidate["url"],
+                        "effective_date": None,
+                    }
+
+            # Fallback to first result
+            first = candidate_rows[0]
+            wd_match = WD_NUMBER_RE.search(first["wd_number"].upper())
             wd_number = wd_match.group(1) if wd_match else "UNKNOWN"
 
-            print(f"[SAM] Returning first candidate WD: {wd_number} -> {first_url}")
-
+            print(f"[SAM] Returning fallback first candidate WD: {wd_number} -> {first['url']}")
             return {
                 "wd_number": wd_number,
-                "wd_title": first_text or f"{county_name}, {state_name} - Building",
-                "source_url": first_url,
-                "detail_url": first_url,
+                "wd_title": first["wd_number"] or f"{county_name}, {state_name} - Building",
+                "source_url": first["url"],
+                "detail_url": first["url"],
                 "effective_date": None,
             }
 
