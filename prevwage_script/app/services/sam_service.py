@@ -136,7 +136,7 @@ def fill_autocomplete_field(page, aria_label: str, value: str, debug_name: str) 
 def search_sam_for_wd(
     state_name: str,
     county_name: str,
-    construction_type: str,  # ignored; we hardcode Building
+    construction_type: str,  # ignored
 ) -> Optional[Dict[str, Any]]:
     print(f"[SAM] WD discovery target: {county_name}, {state_name}, Building")
 
@@ -148,29 +148,34 @@ def search_sam_for_wd(
             page.goto(SAM_BASE_URL, wait_until="domcontentloaded", timeout=60000)
             page.wait_for_timeout(3000)
 
-            body_text = page.locator("body").inner_text(timeout=10000)
-            print(f"[SAM] Landing page text sample: {body_text[:1500]}")
+            print("[SAM] Loaded landing page")
 
-            # Enter DBA path
+            # Step 1: Click DBA path
             pbo_locator = page.get_by_text("Public Buildings or Works", exact=False).first
             pbo_locator.wait_for(timeout=15000)
-            pbo_locator.scroll_into_view_if_needed()
             pbo_locator.click(force=True)
             page.wait_for_timeout(5000)
 
             print(f"[SAM] URL after DBA click: {page.url}")
 
+            # Debug counts
+            print(f"[SAM] wd-state count: {page.locator('input[aria-label=\"wd-state\"]').count()}")
+            print(f"[SAM] wd-county count: {page.locator('input[aria-label=\"wd-county\"]').count()}")
+            print(f"[SAM] dba-construction-type count: {page.locator('input[aria-label=\"dba-construction-type\"]').count()}")
+
+            # -----------------------
             # STATE
+            # -----------------------
             state_filled = False
             try:
                 state_input = page.locator('input[aria-label="wd-state"]').first
-                state_input.wait_for(timeout=5000)
-                state_input.click()
+                state_input.wait_for(state="attached", timeout=15000)
+                state_input.scroll_into_view_if_needed()
+                state_input.click(force=True)
                 state_input.fill("")
                 state_input.fill(state_name)
                 page.wait_for_timeout(1500)
 
-                # click exact visible option
                 page.get_by_text(re.compile(rf"^{re.escape(state_name)}$", re.I)).first.click(force=True, timeout=5000)
                 page.wait_for_timeout(1000)
 
@@ -180,12 +185,15 @@ def search_sam_for_wd(
             except Exception as exc:
                 print(f"[SAM] Failed to fill state: {exc}")
 
+            # -----------------------
             # COUNTY
+            # -----------------------
             county_filled = False
             try:
                 county_input = page.locator('input[aria-label="wd-county"]').first
-                county_input.wait_for(timeout=5000)
-                county_input.click()
+                county_input.wait_for(state="attached", timeout=15000)
+                county_input.scroll_into_view_if_needed()
+                county_input.click(force=True)
                 county_input.fill("")
                 county_input.fill(county_name)
                 page.wait_for_timeout(1500)
@@ -193,40 +201,43 @@ def search_sam_for_wd(
                 try:
                     page.get_by_text(re.compile(rf"^{re.escape(county_name)}$", re.I)).first.click(force=True, timeout=5000)
                 except Exception:
-                    # fallback to just county base name if SAM omits "County"
                     county_base = county_name.replace(" County", "")
                     page.get_by_text(re.compile(rf"^{re.escape(county_base)}$", re.I)).first.click(force=True, timeout=5000)
 
                 page.wait_for_timeout(1000)
+
                 selected = county_input.input_value()
                 print(f"[SAM] County value now: {selected}")
                 county_filled = county_name.replace(" County", "").lower() in selected.lower()
             except Exception as exc:
                 print(f"[SAM] Failed to fill county: {exc}")
 
-            # CONSTRUCTION = hardcoded Building
+            # -----------------------
+            # CONSTRUCTION (HARDCODED)
+            # -----------------------
             construction_filled = False
             try:
                 construction_input = page.locator('input[aria-label="dba-construction-type"]').first
-                construction_input.wait_for(timeout=5000)
-                construction_input.click()
+                construction_input.wait_for(state="attached", timeout=15000)
+                construction_input.scroll_into_view_if_needed()
+                construction_input.click(force=True)
                 construction_input.fill("")
                 construction_input.fill("Building")
                 page.wait_for_timeout(1500)
 
-                option_clicked = False
+                clicked = False
                 for option in page.locator('[role="option"]').all():
                     try:
                         text = (option.inner_text() or "").strip()
                         if text.lower() == "building":
                             option.click(force=True)
-                            option_clicked = True
+                            clicked = True
                             print("[SAM] Clicked construction option: Building")
                             break
                     except Exception:
                         continue
 
-                if not option_clicked:
+                if not clicked:
                     construction_input.press("ArrowDown")
                     page.wait_for_timeout(500)
                     construction_input.press("Enter")
@@ -239,6 +250,7 @@ def search_sam_for_wd(
             except Exception as exc:
                 print(f"[SAM] Failed to fill construction: {exc}")
 
+            # -----------------------
             print(
                 f"[SAM] Fill status: "
                 f"state={state_filled}, county={county_filled}, construction={construction_filled}"
@@ -249,7 +261,9 @@ def search_sam_for_wd(
                 browser.close()
                 return None
 
-            # Submit search
+            # -----------------------
+            # SUBMIT SEARCH
+            # -----------------------
             submitted = False
             for locator in [
                 page.get_by_role("button", name=re.compile("search", re.I)).first,
@@ -272,25 +286,25 @@ def search_sam_for_wd(
             page.wait_for_timeout(5000)
 
             result_text = page.locator("body").inner_text(timeout=10000)
-            print(f"[SAM] Search results text sample: {result_text[:2500]}")
+            print(f"[SAM] Search results text sample: {result_text[:2000]}")
 
+            # -----------------------
+            # COLLECT WD LINKS
+            # -----------------------
             candidate_urls = []
             seen = set()
 
             for a in page.locator("a").all():
                 try:
                     href = a.get_attribute("href")
-                    link_text = (a.inner_text() or "").strip()
+                    text = (a.inner_text() or "").strip()
 
-                    if not href:
-                        continue
-
-                    if "/wage-determination/" in href:
+                    if href and "/wage-determination/" in href:
                         full_url = href if href.startswith("http") else "https://sam.gov" + href
                         if full_url not in seen:
                             seen.add(full_url)
-                            candidate_urls.append((link_text, full_url))
-                            print(f"[SAM] Candidate WD link: text='{link_text}' url='{full_url}'")
+                            candidate_urls.append((text, full_url))
+                            print(f"[SAM] Candidate WD: {full_url}")
                 except Exception:
                     continue
 
@@ -300,7 +314,6 @@ def search_sam_for_wd(
                 print("[SAM] No candidate WD URLs found")
                 return None
 
-            # Return the first candidate for now; validation happens later
             first_text, first_url = candidate_urls[0]
 
             wd_match = WD_NUMBER_RE.search(first_text)
