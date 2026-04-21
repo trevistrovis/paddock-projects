@@ -136,7 +136,7 @@ def fill_autocomplete_field(page, aria_label: str, value: str, debug_name: str) 
 def search_sam_for_wd(
     state_name: str,
     county_name: str,
-    construction_type: str,  # still passed in, but we will ignore it
+    construction_type: str,  # ignored; we hardcode Building
 ) -> Optional[Dict[str, Any]]:
     expected_header = f"COUNTY: {county_name.upper()} IN {state_name.upper()}"
     print(f"[SAM] WD discovery target: {county_name}, {state_name}, Building")
@@ -152,58 +152,88 @@ def search_sam_for_wd(
             body_text = page.locator("body").inner_text(timeout=10000)
             print(f"[SAM] Landing page text sample: {body_text[:1500]}")
 
-            # Step 1: Enter DBA path
+            # Enter the DBA path
             pbo_locator = page.get_by_text("Public Buildings or Works", exact=False).first
             pbo_locator.wait_for(timeout=15000)
+            pbo_locator.scroll_into_view_if_needed()
             pbo_locator.click(force=True)
             page.wait_for_timeout(5000)
 
             print(f"[SAM] URL after DBA click: {page.url}")
 
-            # Step 2: Fill STATE
+            select_count = page.locator("select").count()
+            input_count = page.locator("input").count()
+            button_count = page.locator("button").count()
+
+            print(
+                f"[SAM] After DBA click counts: "
+                f"selects={select_count}, inputs={input_count}, buttons={button_count}"
+            )
+
+            try:
+                visible_text = page.locator("main").text_content(timeout=5000)
+                print(f"[SAM] Main text sample after DBA click: {(visible_text or '')[:1500]}")
+            except Exception as exc:
+                print(f"[SAM] Could not read main text after DBA click: {exc}")
+
+            try:
+                page.locator("select, input").first.wait_for(timeout=15000)
+            except Exception as exc:
+                print(f"[SAM] No form controls appeared after DBA click: {exc}")
+                browser.close()
+                return None
+
+            for i in range(min(page.locator("select").count(), 5)):
+                try:
+                    select_text = page.locator("select").nth(i).text_content() or ""
+                    print(f"[SAM] Select[{i}] text sample: {select_text[:500]}")
+                except Exception:
+                    pass
+
+            for i in range(min(page.locator("input").count(), 7)):
+                try:
+                    inp = page.locator("input").nth(i)
+                    placeholder = inp.get_attribute("placeholder")
+                    aria_label = inp.get_attribute("aria-label")
+                    name = inp.get_attribute("name")
+                    print(
+                        f"[SAM] Input[{i}] "
+                        f"placeholder={placeholder} aria-label={aria_label} name={name}"
+                    )
+                except Exception:
+                    pass
+
+            # Revert state/county to the version that was working
             state_filled = False
+            county_filled = False
+
             try:
                 state_input = page.locator('input[aria-label="wd-state"]').first
                 state_input.wait_for(timeout=5000)
-                state_input.click()
-                state_input.fill("")
                 state_input.fill(state_name)
-                page.wait_for_timeout(1500)
-
-                page.get_by_text(re.compile(f"^{re.escape(state_name)}$", re.I)).first.click(force=True)
-                selected = state_input.input_value()
-                print(f"[SAM] State selected: {selected}")
-
-                state_filled = selected.lower() == state_name.lower()
-
+                page.wait_for_timeout(1000)
+                state_input.press("ArrowDown")
+                state_input.press("Enter")
+                state_filled = True
+                print(f"[SAM] Filled state with: {state_name}")
+                print(f"[SAM] State value now: {state_input.input_value()}")
             except Exception as exc:
                 print(f"[SAM] Failed to fill state: {exc}")
 
-            # Step 3: Fill COUNTY
-            county_filled = False
             try:
                 county_input = page.locator('input[aria-label="wd-county"]').first
                 county_input.wait_for(timeout=5000)
-                county_input.click()
-                county_input.fill("")
                 county_input.fill(county_name)
-                page.wait_for_timeout(1500)
-
-                # Try exact match first
-                try:
-                    page.get_by_text(re.compile(f"^{re.escape(county_name)}$", re.I)).first.click(force=True)
-                except Exception:
-                    county_input.press("Enter")
-
-                selected = county_input.input_value()
-                print(f"[SAM] County selected: {selected}")
-
-                county_filled = county_name.lower() in selected.lower()
-
+                page.wait_for_timeout(1000)
+                county_input.press("ArrowDown")
+                county_input.press("Enter")
+                county_filled = True
+                print(f"[SAM] Filled county with: {county_name}")
+                print(f"[SAM] County value now: {county_input.input_value()}")
             except Exception as exc:
                 print(f"[SAM] Failed to fill county: {exc}")
 
-            # Step 4: Fill CONSTRUCTION (HARDCODED: Building)
+            # Keep construction hardcoded to Building
             construction_filled = False
             try:
                 construction_input = page.locator('input[aria-label="dba-construction-type"]').first
@@ -216,7 +246,6 @@ def search_sam_for_wd(
 
                 option_clicked = False
 
-                # Try role=option
                 for option in page.locator('[role="option"]').all():
                     try:
                         text = (option.inner_text() or "").strip()
@@ -228,7 +257,6 @@ def search_sam_for_wd(
                     except Exception:
                         continue
 
-                # Try text fallback
                 if not option_clicked:
                     try:
                         page.get_by_text(re.compile(r"^Building$", re.I)).first.click(force=True)
@@ -237,7 +265,6 @@ def search_sam_for_wd(
                     except Exception:
                         pass
 
-                # Keyboard fallback
                 if not option_clicked:
                     construction_input.press("ArrowDown")
                     page.wait_for_timeout(500)
@@ -263,7 +290,8 @@ def search_sam_for_wd(
                 browser.close()
                 return None
 
-            # Step 5: Submit search
+            page.wait_for_timeout(1500)
+
             submitted = False
             for locator in [
                 page.get_by_role("button", name=re.compile("search", re.I)).first,
@@ -288,7 +316,6 @@ def search_sam_for_wd(
             result_text = page.locator("body").inner_text(timeout=10000)
             print(f"[SAM] Search results text sample: {result_text[:2000]}")
 
-            # Step 6: Gather candidate WD links
             candidate_urls = []
             seen = set()
 
@@ -309,7 +336,6 @@ def search_sam_for_wd(
                 browser.close()
                 return None
 
-            # Step 7: Validate candidates
             for candidate_url in candidate_urls[:10]:
                 print(f"[SAM] Checking candidate: {candidate_url}")
 
