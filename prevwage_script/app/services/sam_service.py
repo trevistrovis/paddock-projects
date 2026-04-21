@@ -132,6 +132,71 @@ def fill_autocomplete_field(page, aria_label: str, value: str, debug_name: str) 
         print(f"[SAM] Failed to fill {debug_name}: {exc}")
         return False
 
+def select_exact_county_option(page, county_name: str) -> bool:
+    """
+    SAM's county dropdown appears to list county names without the word 'County'.
+    Example:
+      'Philadelphia County' -> 'Philadelphia'
+    """
+    try:
+        county_base = county_name.replace(" County", "").strip()
+
+        county_input = page.locator('input[aria-label="wd-county"]').first
+        county_input.wait_for(timeout=5000)
+        county_input.click()
+        county_input.fill("")
+        county_input.fill(county_base)
+        page.wait_for_timeout(1500)
+
+        # Log visible options for debugging
+        try:
+            options = page.locator('[role="option"]')
+            option_count = options.count()
+            print(f"[SAM] County option count: {option_count}")
+
+            for i in range(min(option_count, 15)):
+                try:
+                    opt_text = (options.nth(i).inner_text() or "").strip()
+                    print(f"[SAM] County option[{i}]: {opt_text}")
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+        # Prefer exact county base match
+        option_candidates = [
+            page.get_by_role("option", name=re.compile(rf"^{re.escape(county_base)}$", re.I)).first,
+            page.get_by_text(re.compile(rf"^{re.escape(county_base)}$", re.I)).first,
+            page.locator(f'text="{county_base}"').first,
+        ]
+
+        option_clicked = False
+        for option in option_candidates:
+            try:
+                option.wait_for(timeout=4000)
+                option.click(force=True)
+                option_clicked = True
+                print(f"[SAM] Clicked county option: {county_base}")
+                break
+            except Exception:
+                continue
+
+        # Fallback to keyboard only if exact click failed
+        if not option_clicked:
+            county_input.press("ArrowDown")
+            page.wait_for_timeout(500)
+            county_input.press("Enter")
+            page.wait_for_timeout(1000)
+            print("[SAM] Used keyboard fallback for county")
+
+        selected = county_input.input_value().strip()
+        print(f"[SAM] County value now: {selected}")
+
+        return county_base.lower() == selected.lower()
+
+    except Exception as exc:
+        print(f"[SAM] Failed to select county: {exc}")
+        return False
 
 def search_sam_for_wd(
     state_name: str,
@@ -210,11 +275,9 @@ def search_sam_for_wd(
                 debug_name="state",
             )
 
-            county_filled = fill_autocomplete_field(
+            county_filled = select_exact_county_option(
                 page,
-                aria_label="wd-county",
-                value=county_name,
-                debug_name="county",
+                county_name=county_name,
             )
 
             # Hardcode construction to Building
