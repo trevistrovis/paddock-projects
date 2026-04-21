@@ -133,11 +133,6 @@ def fill_autocomplete_field(page, aria_label: str, value: str, debug_name: str) 
         return False
 
 def select_exact_county_option(page, county_name: str) -> bool:
-    """
-    SAM county dropdown appears to list county names without the word 'County'.
-    Example:
-      'Philadelphia County' -> 'Philadelphia'
-    """
     try:
         county_base = county_name.replace(" County", "").strip()
 
@@ -148,24 +143,9 @@ def select_exact_county_option(page, county_name: str) -> bool:
         county_input.fill(county_base)
         page.wait_for_timeout(1500)
 
-        # Log visible options for debugging
-        try:
-            options = page.locator('[role="option"]')
-            option_count = options.count()
-            print(f"[SAM] County option count: {option_count}")
-
-            for i in range(min(option_count, 15)):
-                try:
-                    opt_text = (options.nth(i).inner_text() or "").strip()
-                    print(f"[SAM] County option[{i}]: {opt_text}")
-                except Exception:
-                    pass
-        except Exception:
-            pass
-
+        # Only look for visible exact text matches, not generic role=option
         option_clicked = False
         option_candidates = [
-            page.get_by_role("option", name=re.compile(rf"^{re.escape(county_base)}$", re.I)).first,
             page.get_by_text(re.compile(rf"^{re.escape(county_base)}$", re.I)).first,
             page.locator(f'text="{county_base}"').first,
         ]
@@ -187,24 +167,10 @@ def select_exact_county_option(page, county_name: str) -> bool:
             page.wait_for_timeout(1000)
             print("[SAM] Used keyboard fallback for county")
 
-        page.wait_for_timeout(1000)
-
         selected = county_input.input_value().strip()
         print(f"[SAM] County value now: {selected}")
 
-        # Some SAM widgets clear the input after selection and show the chosen
-        # value elsewhere in the UI, so validate using visible page text too.
-        page_text = page.locator("body").inner_text(timeout=5000)
-        print(f"[SAM] County validation text sample: {page_text[:1000]}")
-
-        if selected.lower() == county_base.lower():
-            return True
-
-        if re.search(rf"\b{re.escape(county_base)}\b", page_text, re.I):
-            print(f"[SAM] County confirmed in visible page text: {county_base}")
-            return True
-
-        return False
+        return selected.lower() == county_base.lower()
 
     except Exception as exc:
         print(f"[SAM] Failed to select county: {exc}")

@@ -220,6 +220,15 @@ def fetch_and_store_wage_from_sam(
         return None
 
     candidate_urls = search_result.get("candidates", [])
+
+# fallback to single returned WD URL
+    if not candidate_urls:
+        single_url = search_result.get("source_url") or search_result.get("detail_url")
+        if single_url:
+            candidate_urls = [single_url]
+
+    print(f"[SAM] Candidate URL count returned from search: {len(candidate_urls)}")
+
     if not candidate_urls:
         print("[SAM] No candidate URLs returned from search")
         return None
