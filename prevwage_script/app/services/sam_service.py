@@ -143,7 +143,6 @@ def select_exact_county_option(page, county_name: str) -> bool:
         county_input.fill(county_base)
         page.wait_for_timeout(1500)
 
-        # Only look for visible exact text matches, not generic role=option
         option_clicked = False
         option_candidates = [
             page.get_by_text(re.compile(rf"^{re.escape(county_base)}$", re.I)).first,
@@ -167,10 +166,34 @@ def select_exact_county_option(page, county_name: str) -> bool:
             page.wait_for_timeout(1000)
             print("[SAM] Used keyboard fallback for county")
 
+        # Blur the widget so SAM commits the selection
+        county_input.press("Tab")
+        page.wait_for_timeout(1000)
+
         selected = county_input.input_value().strip()
         print(f"[SAM] County value now: {selected}")
 
-        return selected.lower() == county_base.lower()
+        # Check nearby field container text, not just input_value()
+        container_text = ""
+        try:
+            container_text = (
+                county_input.locator("xpath=ancestor::*[self::div or self::label][1]")
+                .inner_text(timeout=3000)
+                .strip()
+            )
+        except Exception:
+            pass
+
+        print(f"[SAM] County container text: {container_text}")
+
+        if selected.lower() == county_base.lower():
+            return True
+
+        if county_base.lower() in container_text.lower():
+            print(f"[SAM] County confirmed in field container: {county_base}")
+            return True
+
+        return False
 
     except Exception as exc:
         print(f"[SAM] Failed to select county: {exc}")
