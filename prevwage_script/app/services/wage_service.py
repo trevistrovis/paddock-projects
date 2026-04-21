@@ -165,6 +165,9 @@ def fetch_and_store_wage_from_sam(
     detail_url = None
     wd_data = None
 
+    expected_header = f"COUNTY: {county_name.upper()} IN {state_name.upper()}"
+
+    # If cache exists, try it first
     if wd_cache:
         wd_number = wd_cache["wd_number"]
         wd_url = wd_cache.get("source_url") or wd_cache.get("detail_url")
@@ -173,72 +176,114 @@ def fetch_and_store_wage_from_sam(
             f"[SAM] Cached WD URLs for {fips}: "
             f"source_url={wd_cache.get('source_url')}, detail_url={wd_cache.get('detail_url')}"
         )
+
         wd_data = fetch_wd_detail_from_sam(wd_number=wd_number, wd_url=wd_url)
-    else:
-        search_result = search_sam_for_wd(
-            state_name=state_name,
-            county_name=county_name,
-            construction_type=construction_type,
+
+        if wd_data:
+            wd_text = wd_data.get("text", "")
+            if expected_header in wd_text.upper():
+                millwright = extract_millwright_from_wd(wd_data)
+                if millwright:
+                    effective_date = millwright["effective_date"] or date.today().isoformat()
+
+                    save_wage(
+                        fips=fips,
+                        base_rate=millwright["base_rate"],
+                        fringe_rate=millwright["fringe_rate"],
+                        effective_date=effective_date,
+                        source="Davis-Bacon",
+                        source_id=wd_number,
+                        source_url=wd_url,
+                        notes=f"Fetched from SAM for {county_name}, {state_name}, {construction_type}",
+                    )
+
+                    return {
+                        "base_rate": millwright["base_rate"],
+                        "fringe_rate": millwright["fringe_rate"],
+                        "effective_date": effective_date,
+                        "source_note": f"Davis-Bacon {wd_number}",
+                    }
+
+        print(f"[SAM] Cached WD failed for {fips}, falling back to fresh discovery...")
+
+    # Fresh search
+    search_result = search_sam_for_wd(
+        state_name=state_name,
+        county_name=county_name,
+        construction_type=construction_type,
+    )
+
+    print(f"[SAM] search_sam_for_wd result: {search_result}")
+
+    if not search_result:
+        print(f"[SAM] No WD search result found for {county_name}, {state_name}")
+        return None
+
+    candidate_urls = search_result.get("candidates", [])
+    if not candidate_urls:
+        print("[SAM] No candidate URLs returned from search")
+        return None
+
+    # Try each candidate until the downloaded WD text matches county/state
+    for candidate_url in candidate_urls:
+        print(f"[SAM] Trying candidate WD URL: {candidate_url}")
+
+        wd_data = fetch_wd_detail_from_sam(
+            wd_number="UNKNOWN",
+            wd_url=candidate_url,
         )
 
-        print(f"[SAM] search_sam_for_wd result: {search_result}")
+        if not wd_data:
+            continue
 
-        if not search_result:
-            print(f"[SAM] No WD search result found for {county_name}, {state_name}")
-            return None
-
-        wd_number = search_result["wd_number"]
-        wd_url = search_result.get("source_url")
-        detail_url = search_result.get("detail_url")
-
-        wd_data = fetch_wd_detail_from_sam(wd_number=wd_number, wd_url=wd_url)
         wd_text = wd_data.get("text", "")
-        expected_header = f"COUNTY: {county_name.upper()} IN {state_name.upper()}"
-
         if expected_header not in wd_text.upper():
-            print(f"[SAM] WD text does not match requested county/state. Expected '{expected_header}'")
-            return None
+            print(f"[SAM] Candidate did not match expected county/state: {candidate_url}")
+            continue
 
-    if not wd_data:
-        print(f"[SAM] No WD detail data available for {fips}")
-        return None
+        wd_match = WD_NUMBER_RE.search(wd_text.upper())
+        wd_number = wd_match.group(1) if wd_match else "UNKNOWN"
+        wd_url = candidate_url
+        detail_url = candidate_url
 
-    millwright = extract_millwright_from_wd(wd_data)
-    if not millwright:
-        print(f"[SAM] No Millwright line found in WD {wd_number}")
-        return None
+        millwright = extract_millwright_from_wd(wd_data)
+        if not millwright:
+            print(f"[SAM] No Millwright line found in WD {wd_number}")
+            continue
 
-    # Only cache after validation succeeds
-    if not wd_cache:
+        # Cache only after validation succeeds
         save_wd_cache(
             fips=fips,
             wd_number=wd_number,
             construction_type=construction_type,
-            wd_title=f"{county_name}, {state_name} - {construction_type}",
+            wd_title=f"{county_name}, {state_name} - Building",
             source_url=wd_url,
             detail_url=detail_url,
             effective_date=millwright.get("effective_date"),
         )
 
-    effective_date = millwright["effective_date"] or date.today().isoformat()
+        effective_date = millwright["effective_date"] or date.today().isoformat()
 
-    save_wage(
-        fips=fips,
-        base_rate=millwright["base_rate"],
-        fringe_rate=millwright["fringe_rate"],
-        effective_date=effective_date,
-        source="Davis-Bacon",
-        source_id=wd_number,
-        source_url=wd_url,
-        notes=f"Fetched from SAM for {county_name}, {state_name}, {construction_type}",
-    )
+        save_wage(
+            fips=fips,
+            base_rate=millwright["base_rate"],
+            fringe_rate=millwright["fringe_rate"],
+            effective_date=effective_date,
+            source="Davis-Bacon",
+            source_id=wd_number,
+            source_url=wd_url,
+            notes=f"Fetched from SAM for {county_name}, {state_name}, {construction_type}",
+        )
 
-    return {
-        "base_rate": millwright["base_rate"],
-        "fringe_rate": millwright["fringe_rate"],
-        "effective_date": effective_date,
-        "source_note": f"Davis-Bacon {wd_number}",
-    }
+        return {
+            "base_rate": millwright["base_rate"],
+            "fringe_rate": millwright["fringe_rate"],
+            "effective_date": effective_date,
+            "source_note": f"Davis-Bacon {wd_number}",
+        }
+
+    print(f"[SAM] No candidate WD matched {county_name}, {state_name}")
+    return None
 
 def lookup_millwright_wage(fips: str, as_of_date: Optional[str] = None) -> Dict[str, Any]:
     print(f"[WAGE] Looking up wage for FIPS {fips}")

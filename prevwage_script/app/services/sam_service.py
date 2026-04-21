@@ -350,56 +350,13 @@ def search_sam_for_wd(
                 print("[SAM] No candidate WD URLs found")
                 return None
 
-            county_base = county_name.replace(" County", "").lower()
-
-            # Prefer county + state + building
-            for candidate in candidate_rows:
-                row_text_lower = candidate["text"].lower()
-                if (
-                    county_base in row_text_lower
-                    and state_name.lower() in row_text_lower
-                    and "building" in row_text_lower
-                ):
-                    wd_match = WD_NUMBER_RE.search(candidate["wd_number"].upper())
-                    wd_number = wd_match.group(1) if wd_match else "UNKNOWN"
-
-                    print(f"[SAM] Returning county/state/building matched candidate WD: {wd_number} -> {candidate['url']}")
-                    return {
-                        "wd_number": wd_number,
-                        "wd_title": candidate["wd_number"] or f"{county_name}, {state_name} - Building",
-                        "source_url": candidate["url"],
-                        "detail_url": candidate["url"],
-                        "effective_date": None,
-                    }
-
-            # Then county + state
-            for candidate in candidate_rows:
-                row_text_lower = candidate["text"].lower()
-                if county_base in row_text_lower and state_name.lower() in row_text_lower:
-                    wd_match = WD_NUMBER_RE.search(candidate["wd_number"].upper())
-                    wd_number = wd_match.group(1) if wd_match else "UNKNOWN"
-
-                    print(f"[SAM] Returning county/state matched candidate WD: {wd_number} -> {candidate['url']}")
-                    return {
-                        "wd_number": wd_number,
-                        "wd_title": candidate["wd_number"] or f"{county_name}, {state_name} - Building",
-                        "source_url": candidate["url"],
-                        "detail_url": candidate["url"],
-                        "effective_date": None,
-                    }
-
-            # Fallback to first result
-            first = candidate_rows[0]
-            wd_match = WD_NUMBER_RE.search(first["wd_number"].upper())
-            wd_number = wd_match.group(1) if wd_match else "UNKNOWN"
-
-            print(f"[SAM] Returning fallback first candidate WD: {wd_number} -> {first['url']}")
             return {
-                "wd_number": wd_number,
-                "wd_title": first["wd_number"] or f"{county_name}, {state_name} - Building",
-                "source_url": first["url"],
-                "detail_url": first["url"],
+                "wd_number": "CANDIDATES",
+                "wd_title": f"{county_name}, {state_name} - Building",
+                "source_url": None,
+                "detail_url": None,
                 "effective_date": None,
+                "candidates": [row["url"] for row in candidate_rows[:10]],
             }
 
         except PlaywrightTimeoutError as exc:
