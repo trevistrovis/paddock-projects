@@ -192,6 +192,12 @@ def fetch_and_store_wage_from_sam(
         detail_url = search_result.get("detail_url")
 
         wd_data = fetch_wd_detail_from_sam(wd_number=wd_number, wd_url=wd_url)
+        wd_text = wd_data.get("text", "")
+        expected_header = f"COUNTY: {county_name.upper()} IN {state_name.upper()}"
+
+        if expected_header not in wd_text.upper():
+            print(f"[SAM] WD text does not match requested county/state. Expected '{expected_header}'")
+            return None
 
     if not wd_data:
         print(f"[SAM] No WD detail data available for {fips}")
