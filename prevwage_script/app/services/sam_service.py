@@ -279,34 +279,12 @@ def search_sam_for_wd(
 
             print(f"[SAM] URL after DBA click: {page.url}")
 
-            select_count = page.locator("select").count()
-            input_count = page.locator("input").count()
-            button_count = page.locator("button").count()
-
-            print(
-                f"[SAM] After DBA click counts: "
-                f"selects={select_count}, inputs={input_count}, buttons={button_count}"
-            )
-
-            try:
-                visible_text = page.locator("main").text_content(timeout=5000)
-                print(f"[SAM] Main text sample after DBA click: {(visible_text or '')[:1500]}")
-            except Exception as exc:
-                print(f"[SAM] Could not read main text after DBA click: {exc}")
-
             try:
                 page.locator("select, input").first.wait_for(timeout=15000)
             except Exception as exc:
                 print(f"[SAM] No form controls appeared after DBA click: {exc}")
                 browser.close()
                 return None
-
-            for i in range(min(page.locator("select").count(), 5)):
-                try:
-                    select_text = page.locator("select").nth(i).text_content() or ""
-                    print(f"[SAM] Select[{i}] text sample: {select_text[:500]}")
-                except Exception:
-                    pass
 
             for i in range(min(page.locator("input").count(), 7)):
                 try:
@@ -321,7 +299,7 @@ def search_sam_for_wd(
                 except Exception:
                     pass
 
-            # State selection: keep your existing helper if it's working
+            # State selection
             state_filled = fill_autocomplete_field(
                 page,
                 aria_label="wd-state",
@@ -329,7 +307,7 @@ def search_sam_for_wd(
                 debug_name="state",
             )
 
-            # County selection: use exact county option helper
+            # County selection
             county_filled = select_exact_county_option(
                 page,
                 county_name=county_name,
@@ -390,8 +368,6 @@ def search_sam_for_wd(
                 browser.close()
                 return None
 
-            page.wait_for_timeout(1500)
-
             # Submit search
             submitted = False
             for locator in [
@@ -417,12 +393,6 @@ def search_sam_for_wd(
             try:
                 result_text = page.locator("body").inner_text(timeout=10000)
                 print(f"[SAM] Search results text sample: {result_text[:2500]}")
-                set_results_per_page_to_100(page)
-
-                # Re-read the page after changing page size
-                page.wait_for_timeout(3000)
-                result_text = page.locator("body").inner_text(timeout=10000)
-                print(f"[SAM] Search results text sample after page-size update: {result_text[:2500]}")
             except Exception as exc:
                 print(f"[SAM] Could not read search results body text: {exc}")
                 browser.close()
@@ -432,7 +402,6 @@ def search_sam_for_wd(
             state_lower = state_name.strip().lower()
             construction_lower = "building"
 
-            # Collect all WD links visible on the current results page
             links = page.locator('a[href*="/wage-determination/"]')
             link_count = links.count()
             print(f"[SAM] WD result link count on page: {link_count}")
@@ -452,22 +421,28 @@ def search_sam_for_wd(
 
                     full_url = href if href.startswith("http") else "https://sam.gov" + href
 
-                    # Pull the visible result card/container text
+                    # Read the full visible card text, not just the tiny WD title wrapper
                     card_text = ""
                     try:
-                        card_text = (
-                            link.locator("xpath=ancestor::*[self::div or self::article][1]")
-                            .inner_text(timeout=3000)
+                        card = link.locator(
+                            "xpath=ancestor::div[contains(., 'State') and contains(., 'Counties') and contains(., 'Construction Types')][1]"
                         )
+                        if card.count() > 0:
+                            card_text = card.inner_text(timeout=3000)
+                        else:
+                            raise Exception("No rich result-card ancestor found")
                     except Exception:
                         try:
-                            card_text = link.locator("xpath=ancestor::*[1]").inner_text(timeout=3000)
+                            card_text = link.locator("xpath=ancestor::div[5]").inner_text(timeout=3000)
                         except Exception:
-                            card_text = link_text
+                            try:
+                                card_text = link.locator("xpath=ancestor::div[4]").inner_text(timeout=3000)
+                            except Exception:
+                                card_text = link_text
 
                     card_text_lower = card_text.lower()
 
-                    print(f"[SAM] Result card text sample: {card_text[:500]}")
+                    print(f"[SAM] Result card text sample: {card_text[:1000]}")
 
                     has_state = state_lower in card_text_lower
                     has_county = county_base in card_text_lower
