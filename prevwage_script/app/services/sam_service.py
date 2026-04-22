@@ -181,6 +181,49 @@ def select_exact_county_option(page, county_name: str) -> bool:
         print(f"[SAM] Failed to select county: {exc}")
         return False
 
+def set_results_per_page_to_100(page) -> None:
+    try:
+        page_size_changed = False
+
+        # Open the results-per-page control
+        for locator in [
+            page.get_by_text(re.compile(r"^25$", re.I)).first,
+            page.get_by_role("combobox").first,
+            page.get_by_text(re.compile(r"results per page", re.I)).first,
+        ]:
+            try:
+                locator.wait_for(timeout=3000)
+                locator.click(force=True)
+                page.wait_for_timeout(1000)
+                page_size_changed = True
+                break
+            except Exception:
+                continue
+
+        if not page_size_changed:
+            print("[SAM] Could not open results-per-page control")
+            return
+
+        # Select 100
+        for locator in [
+            page.get_by_role("option", name=re.compile(r"^100$", re.I)).first,
+            page.get_by_text(re.compile(r"^100$", re.I)).first,
+            page.locator('text="100"').first,
+        ]:
+            try:
+                locator.wait_for(timeout=3000)
+                locator.click(force=True)
+                page.wait_for_timeout(4000)
+                print("[SAM] Set results per page to 100")
+                return
+            except Exception:
+                continue
+
+        print("[SAM] Could not select 100 results per page")
+
+    except Exception as exc:
+        print(f"[SAM] Failed to set results per page to 100: {exc}")
+
 def search_sam_for_wd(
     state_name: str,
     county_name: str,
@@ -346,6 +389,12 @@ def search_sam_for_wd(
             try:
                 result_text = page.locator("body").inner_text(timeout=10000)
                 print(f"[SAM] Search results text sample: {result_text[:2500]}")
+                set_results_per_page_to_100(page)
+
+                # Re-read the page after changing page size
+                page.wait_for_timeout(3000)
+                result_text = page.locator("body").inner_text(timeout=10000)
+                print(f"[SAM] Search results text sample after page-size update: {result_text[:2500]}")
             except Exception as exc:
                 print(f"[SAM] Could not read search results body text: {exc}")
                 browser.close()
