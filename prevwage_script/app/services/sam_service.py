@@ -183,9 +183,37 @@ def select_exact_county_option(page, county_name: str) -> bool:
 
 def set_results_per_page_to_100(page) -> None:
     try:
-        page_size_changed = False
+        print("[SAM] Attempting to set results per page to 100")
 
-        # Open the results-per-page control
+        # Log visible select/combobox-ish controls first
+        try:
+            select_count = page.locator("select").count()
+            print(f"[SAM] Select count before page-size change: {select_count}")
+            for i in range(min(select_count, 5)):
+                try:
+                    txt = page.locator("select").nth(i).text_content() or ""
+                    print(f"[SAM] Select[{i}] text sample: {txt[:300]}")
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+        # First try a real select element if one exists
+        try:
+            selects = page.locator("select")
+            for i in range(selects.count()):
+                sel = selects.nth(i)
+                txt = (sel.text_content() or "").lower()
+                if "25" in txt and "100" in txt:
+                    sel.select_option(label="100")
+                    page.wait_for_timeout(4000)
+                    print(f"[SAM] Set results per page to 100 using select[{i}]")
+                    return
+        except Exception as exc:
+            print(f"[SAM] Select-based page-size change failed: {exc}")
+
+        # Fallback: click the current page-size control, then click 100
+        opened = False
         for locator in [
             page.get_by_text(re.compile(r"^25$", re.I)).first,
             page.get_by_role("combobox").first,
@@ -195,16 +223,16 @@ def set_results_per_page_to_100(page) -> None:
                 locator.wait_for(timeout=3000)
                 locator.click(force=True)
                 page.wait_for_timeout(1000)
-                page_size_changed = True
+                opened = True
+                print("[SAM] Opened results-per-page control")
                 break
             except Exception:
                 continue
 
-        if not page_size_changed:
+        if not opened:
             print("[SAM] Could not open results-per-page control")
             return
 
-        # Select 100
         for locator in [
             page.get_by_role("option", name=re.compile(r"^100$", re.I)).first,
             page.get_by_text(re.compile(r"^100$", re.I)).first,
@@ -214,7 +242,7 @@ def set_results_per_page_to_100(page) -> None:
                 locator.wait_for(timeout=3000)
                 locator.click(force=True)
                 page.wait_for_timeout(4000)
-                print("[SAM] Set results per page to 100")
+                print("[SAM] Set results per page to 100 using option click")
                 return
             except Exception:
                 continue
