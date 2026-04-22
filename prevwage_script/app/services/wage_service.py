@@ -9,6 +9,9 @@ from app.services.sam_service import (
     extract_millwright_from_wd,
 
 )
+import re
+
+WD_NUMBER_RE = re.compile(r"\b([A-Z]{2}\d{8})\b")
 
 def get_wage_from_db(fips: str, as_of_date: Optional[str] = None) -> Optional[Dict[str, Any]]:
     conn = get_db_conn()
