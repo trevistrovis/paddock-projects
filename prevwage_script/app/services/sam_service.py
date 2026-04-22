@@ -259,6 +259,38 @@ def search_sam_for_wd(
 ) -> Optional[Dict[str, Any]]:
     print(f"[SAM] WD discovery target: {county_name}, {state_name}, Building")
 
+    def go_to_next_page(page) -> bool:
+        try:
+            next_candidates = [
+                page.get_by_role("button", name=re.compile(r"next", re.I)).first,
+                page.get_by_role("link", name=re.compile(r"next", re.I)).first,
+                page.locator('[aria-label*="Next"]').first,
+                page.get_by_text(re.compile(r"^Next$", re.I)).first,
+            ]
+
+            for locator in next_candidates:
+                try:
+                    locator.wait_for(timeout=3000)
+                    disabled = locator.get_attribute("disabled")
+                    aria_disabled = locator.get_attribute("aria-disabled")
+
+                    if disabled is not None or aria_disabled == "true":
+                        continue
+
+                    locator.click(force=True)
+                    page.wait_for_timeout(4000)
+                    print("[SAM] Moved to next results page")
+                    return True
+                except Exception:
+                    continue
+
+            print("[SAM] No next page available")
+            return False
+
+        except Exception as exc:
+            print(f"[SAM] Failed to move to next page: {exc}")
+            return False
+
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
         page = browser.new_page()
@@ -402,69 +434,79 @@ def search_sam_for_wd(
             state_lower = state_name.strip().lower()
             construction_lower = "building"
 
-            links = page.locator('a[href*="/wage-determination/"]')
-            link_count = links.count()
-            print(f"[SAM] WD result link count on page: {link_count}")
-
             matched_result = None
+            max_pages = 10
 
-            for idx in range(link_count):
-                try:
-                    print(f"[SAM] Scanning result card {idx + 1} of {link_count}")
+            for page_num in range(1, max_pages + 1):
+                print(f"[SAM] Scanning results page {page_num}")
 
-                    link = links.nth(idx)
-                    href = link.get_attribute("href")
-                    link_text = (link.inner_text() or "").strip()
+                links = page.locator('a[href*="/wage-determination/"]')
+                link_count = links.count()
+                print(f"[SAM] WD result link count on page {page_num}: {link_count}")
 
-                    if not href or not link_text:
-                        continue
-
-                    full_url = href if href.startswith("http") else "https://sam.gov" + href
-
-                    # Read the full visible card text, not just the tiny WD title wrapper
-                    card_text = ""
+                for idx in range(link_count):
                     try:
-                        card = link.locator(
-                            "xpath=ancestor::div[contains(., 'State') and contains(., 'Counties') and contains(., 'Construction Types')][1]"
-                        )
-                        if card.count() > 0:
-                            card_text = card.inner_text(timeout=3000)
-                        else:
-                            raise Exception("No rich result-card ancestor found")
-                    except Exception:
+                        print(f"[SAM] Scanning result card {idx + 1} of {link_count}")
+
+                        link = links.nth(idx)
+                        href = link.get_attribute("href")
+                        link_text = (link.inner_text() or "").strip()
+
+                        if not href or not link_text:
+                            continue
+
+                        full_url = href if href.startswith("http") else "https://sam.gov" + href
+
+                        # Read the full visible card text
+                        card_text = ""
                         try:
-                            card_text = link.locator("xpath=ancestor::div[5]").inner_text(timeout=3000)
+                            card = link.locator(
+                                "xpath=ancestor::div[contains(., 'State') and contains(., 'Counties') and contains(., 'Construction Types')][1]"
+                            )
+                            if card.count() > 0:
+                                card_text = card.inner_text(timeout=3000)
+                            else:
+                                raise Exception("No rich result-card ancestor found")
                         except Exception:
                             try:
-                                card_text = link.locator("xpath=ancestor::div[4]").inner_text(timeout=3000)
+                                card_text = link.locator("xpath=ancestor::div[5]").inner_text(timeout=3000)
                             except Exception:
-                                card_text = link_text
+                                try:
+                                    card_text = link.locator("xpath=ancestor::div[4]").inner_text(timeout=3000)
+                                except Exception:
+                                    card_text = link_text
 
-                    card_text_lower = card_text.lower()
+                        card_text_lower = card_text.lower()
 
-                    print(f"[SAM] Result card text sample: {card_text[:1000]}")
+                        print(f"[SAM] Result card text sample: {card_text[:1000]}")
 
-                    has_state = state_lower in card_text_lower
-                    has_county = county_base in card_text_lower
-                    has_building = construction_lower in card_text_lower
+                        has_state = state_lower in card_text_lower
+                        has_county = county_base in card_text_lower
+                        has_building = construction_lower in card_text_lower
 
-                    print(
-                        f"[SAM] Card match flags: "
-                        f"state={has_state}, county={has_county}, construction={has_building}"
-                    )
+                        print(
+                            f"[SAM] Card match flags: "
+                            f"state={has_state}, county={has_county}, construction={has_building}"
+                        )
 
-                    if has_state and has_county and has_building:
-                        print(f"[SAM] Found matching result card: {link_text} -> {full_url}")
-                        matched_result = {
-                            "wd_number": link_text,
-                            "url": full_url,
-                            "text": card_text,
-                        }
-                        break
+                        if has_state and has_county and has_building:
+                            print(f"[SAM] Found matching result card: {link_text} -> {full_url}")
+                            matched_result = {
+                                "wd_number": link_text,
+                                "url": full_url,
+                                "text": card_text,
+                            }
+                            break
 
-                except Exception as exc:
-                    print(f"[SAM] Failed while scanning result card {idx + 1}: {exc}")
-                    continue
+                    except Exception as exc:
+                        print(f"[SAM] Failed while scanning result card {idx + 1}: {exc}")
+                        continue
+
+                if matched_result:
+                    break
+
+                if not go_to_next_page(page):
+                    break
 
             browser.close()
 
