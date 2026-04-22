@@ -188,6 +188,135 @@ def search_sam_for_wd(
 ) -> Optional[Dict[str, Any]]:
     print(f"[SAM] WD discovery target: {county_name}, {state_name}, Building")
 
+    def collect_candidate_rows_from_page(page) -> list[dict]:
+        rows = []
+        seen = set()
+
+        links = page.locator('a[href*="/wage-determination/"]')
+        link_count = links.count()
+        print(f"[SAM] WD result link count on page: {link_count}")
+
+        for i in range(link_count):
+            try:
+                link = links.nth(i)
+                href = link.get_attribute("href")
+                link_text = (link.inner_text() or "").strip()
+
+                if not href:
+                    continue
+
+                full_url = href if href.startswith("http") else "https://sam.gov" + href
+                if full_url in seen:
+                    continue
+                seen.add(full_url)
+
+                row_text = ""
+                try:
+                    row_text = (
+                        link.locator("xpath=ancestor::*[self::div or self::article][1]")
+                        .inner_text(timeout=3000)
+                    )
+                except Exception:
+                    try:
+                        row_text = link.locator("xpath=ancestor::*[1]").inner_text(timeout=3000)
+                    except Exception:
+                        row_text = link_text
+
+                rows.append({
+                    "wd_number": link_text,
+                    "url": full_url,
+                    "text": row_text,
+                })
+
+                print(f"[SAM] Candidate WD link: text='{link_text}' url='{full_url}'")
+            except Exception:
+                continue
+
+        print(f"[SAM] Collected {len(rows)} candidate rows from current page")
+        return rows
+
+    def set_results_per_page_to_100(page) -> None:
+        try:
+            # Most likely selector first
+            page_size_clicked = False
+
+            for locator in [
+                page.get_by_text(re.compile(r"^25$", re.I)).first,
+                page.get_by_text(re.compile(r"^100$", re.I)).first,
+                page.get_by_role("button", name=re.compile(r"25|page size|results per page", re.I)).first,
+                page.get_by_role("combobox").first,
+            ]:
+                try:
+                    locator.wait_for(timeout=3000)
+                    locator.click(force=True)
+                    page_size_clicked = True
+                    page.wait_for_timeout(1000)
+                    break
+                except Exception:
+                    continue
+
+            # Try to choose 100 from the menu/list if opened
+            for locator in [
+                page.get_by_role("option", name=re.compile(r"^100$", re.I)).first,
+                page.get_by_text(re.compile(r"^100$", re.I)).first,
+                page.locator('text="100"').first,
+            ]:
+                try:
+                    locator.wait_for(timeout=3000)
+                    locator.click(force=True)
+                    page.wait_for_timeout(4000)
+                    print("[SAM] Set results per page to 100")
+                    return
+                except Exception:
+                    continue
+
+            # Fallback: if combobox is active, type/select 100
+            if page_size_clicked:
+                try:
+                    page.keyboard.type("100")
+                    page.keyboard.press("Enter")
+                    page.wait_for_timeout(4000)
+                    print("[SAM] Set results per page to 100 via keyboard fallback")
+                    return
+                except Exception:
+                    pass
+
+            print("[SAM] Could not set results per page to 100; continuing with default page size")
+        except Exception as exc:
+            print(f"[SAM] Failed to set results per page to 100: {exc}")
+
+    def go_to_next_page(page) -> bool:
+        try:
+            next_candidates = [
+                page.get_by_role("button", name=re.compile(r"next", re.I)).first,
+                page.get_by_role("link", name=re.compile(r"next", re.I)).first,
+                page.get_by_text(re.compile(r"next", re.I)).first,
+                page.locator('[aria-label*="Next"]').first,
+            ]
+
+            for locator in next_candidates:
+                try:
+                    locator.wait_for(timeout=3000)
+                    # Skip disabled next buttons
+                    disabled = locator.get_attribute("disabled")
+                    aria_disabled = locator.get_attribute("aria-disabled")
+                    if disabled is not None or aria_disabled == "true":
+                        continue
+
+                    locator.click(force=True)
+                    page.wait_for_timeout(5000)
+                    print("[SAM] Moved to next search results page")
+                    return True
+                except Exception:
+                    continue
+
+            print("[SAM] No next page available")
+            return False
+
+        except Exception as exc:
+            print(f"[SAM] Failed to move to next page: {exc}")
+            return False
+
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
         page = browser.new_page()
@@ -208,49 +337,18 @@ def search_sam_for_wd(
 
             print(f"[SAM] URL after DBA click: {page.url}")
 
-            select_count = page.locator("select").count()
-            input_count = page.locator("input").count()
-            button_count = page.locator("button").count()
-
-            print(
-                f"[SAM] After DBA click counts: "
-                f"selects={select_count}, inputs={input_count}, buttons={button_count}"
-            )
-
-            try:
-                visible_text = page.locator("main").text_content(timeout=5000)
-                print(f"[SAM] Main text sample after DBA click: {(visible_text or '')[:1500]}")
-            except Exception as exc:
-                print(f"[SAM] Could not read main text after DBA click: {exc}")
-
-            try:
-                page.locator("select, input").first.wait_for(timeout=15000)
-            except Exception as exc:
-                print(f"[SAM] No form controls appeared after DBA click: {exc}")
-                browser.close()
-                return None
-
-            for i in range(min(page.locator("select").count(), 5)):
-                try:
-                    select_text = page.locator("select").nth(i).text_content() or ""
-                    print(f"[SAM] Select[{i}] text sample: {select_text[:500]}")
-                except Exception:
-                    pass
-
             for i in range(min(page.locator("input").count(), 7)):
                 try:
                     inp = page.locator("input").nth(i)
-                    placeholder = inp.get_attribute("placeholder")
-                    aria_label = inp.get_attribute("aria-label")
-                    name = inp.get_attribute("name")
                     print(
                         f"[SAM] Input[{i}] "
-                        f"placeholder={placeholder} aria-label={aria_label} name={name}"
+                        f"placeholder={inp.get_attribute('placeholder')} "
+                        f"aria-label={inp.get_attribute('aria-label')} "
+                        f"name={inp.get_attribute('name')}"
                     )
                 except Exception:
                     pass
 
-            # State selection: keep your existing helper if it's working
             state_filled = fill_autocomplete_field(
                 page,
                 aria_label="wd-state",
@@ -258,13 +356,11 @@ def search_sam_for_wd(
                 debug_name="state",
             )
 
-            # County selection: exact county option, but SAM lists counties without "County"
             county_filled = select_exact_county_option(
                 page,
                 county_name=county_name,
             )
 
-            # Hardcode construction to Building
             construction_filled = False
             try:
                 construction_input = page.locator('input[aria-label="dba-construction-type"]').first
@@ -319,9 +415,6 @@ def search_sam_for_wd(
                 browser.close()
                 return None
 
-            page.wait_for_timeout(1500)
-
-            # Submit search
             submitted = False
             for locator in [
                 page.get_by_role("button", name=re.compile("search", re.I)).first,
@@ -345,61 +438,51 @@ def search_sam_for_wd(
 
             try:
                 result_text = page.locator("body").inner_text(timeout=10000)
-                print(f"[SAM] Search results text sample: {result_text[:2500]}")
+                print(f"[SAM] Search results text sample: {result_text[:2000]}")
             except Exception as exc:
                 print(f"[SAM] Could not read search results body text: {exc}")
                 browser.close()
                 return None
 
-            # Prefer the filtered result if the page narrowed correctly
-            if "Showing 1 - 1 of 1 results" in result_text:
-                print("[SAM] County/state/building filters narrowed to a single result")
-            elif "Showing 1 - 25 of" in result_text:
-                print("[SAM] Filters are still too broad")
+            # Try to expand to 100 results first
+            set_results_per_page_to_100(page)
 
-            result_url = None
-            result_label = None
+            all_candidate_rows = []
+            seen_urls = set()
+            max_pages = 5
 
-            links = page.locator('a[href*="/wage-determination/"]')
-            link_count = links.count()
-            print(f"[SAM] WD result link count on page: {link_count}")
+            for page_num in range(1, max_pages + 1):
+                print(f"[SAM] Collecting candidates from results page {page_num}")
 
-            for i in range(link_count):
-                try:
-                    link = links.nth(i)
-                    href = link.get_attribute("href")
-                    text = (link.inner_text() or "").strip()
+                page_rows = collect_candidate_rows_from_page(page)
 
-                    if not href or not text:
-                        continue
+                new_rows = 0
+                for row in page_rows:
+                    if row["url"] not in seen_urls:
+                        seen_urls.add(row["url"])
+                        all_candidate_rows.append(row)
+                        new_rows += 1
 
-                    wd_match = WD_NUMBER_RE.search(text.upper())
-                    if not wd_match:
-                        continue
+                print(f"[SAM] Added {new_rows} new candidate rows from page {page_num}")
 
-                    result_url = href if href.startswith("http") else "https://sam.gov" + href
-                    result_label = text
-                    print(f"[SAM] Selected visible filtered WD result: {result_label} -> {result_url}")
+                if not go_to_next_page(page):
                     break
-
-                except Exception:
-                    continue
 
             browser.close()
 
-            if not result_url:
-                print("[SAM] No filtered WD result found")
+            if not all_candidate_rows:
+                print("[SAM] No candidate WD URLs found")
                 return None
 
-            wd_match = WD_NUMBER_RE.search(result_label.upper())
-            wd_number = wd_match.group(1) if wd_match else "UNKNOWN"
+            print(f"[SAM] Returning {len(all_candidate_rows)} candidate URLs from search")
 
             return {
-                "wd_number": wd_number,
-                "wd_title": result_label,
-                "source_url": result_url,
-                "detail_url": result_url,
+                "wd_number": "CANDIDATES",
+                "wd_title": f"{county_name}, {state_name} - Building",
+                "source_url": None,
+                "detail_url": None,
                 "effective_date": None,
+                "candidates": [row["url"] for row in all_candidate_rows],
             }
 
         except PlaywrightTimeoutError as exc:
