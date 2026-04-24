@@ -6,8 +6,6 @@ from app.services.location_service import get_county_by_fips
 from app.services.sam_service import (
     search_sam_for_wd,
     fetch_wd_detail_from_sam,
-    extract_millwright_from_wd,
-
 )
 import re
 
