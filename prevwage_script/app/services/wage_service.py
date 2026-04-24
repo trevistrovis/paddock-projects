@@ -161,6 +161,7 @@ def save_wage(
 
 def fetch_and_store_wage_from_sam(
     fips: str,
+    worker_classification: str = "Millwright",
     as_of_date: Optional[str] = None,
     construction_type: str = DEFAULT_CONSTRUCTION_TYPE,
     wd_cache: Optional[Dict[str, Any]] = None,
