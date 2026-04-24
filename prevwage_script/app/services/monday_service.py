@@ -86,7 +86,7 @@ class MondayClient:
             RES_COL_CITY_STATE_ZIP: city_state_zip,
             RES_COL_COUNTY: county,
             RES_COL_FIPS: fips,
-            RES_WORKER_COL: {"label": [worker_classification]},
+            RES_WORKER_COL: {"labels": [worker_classification]},
             RES_COL_BASE_RATE: base_rate,
             RES_COL_FRINGE_RATE: fringe_rate,
             RES_COL_EFFECTIVE_DATE: {"date": effective_date},
