@@ -11,7 +11,7 @@ from app.services.monday_service import (
     parse_request_item,
 )
 from app.services.location_service import resolve_location
-from app.services.wage_service import lookup_millwright_wage
+from app.services.wage_service import lookup_worker_wage
 
 router = APIRouter()
 
@@ -27,7 +27,13 @@ def process_request_item(item_id: int) -> None:
         location = resolve_location(req["city_state_zip"])
         print(f"[PROCESS] Resolved location: {location}")
 
-        wage = lookup_millwright_wage(location["fips"], req["date_needed"] or None)
+        worker_classification = req.get("worker_classification") or "Millwright"
+
+        wage = lookup_worker_wage(
+            fips=location["fips"],
+            worker_classification=worker_classification,
+            as_of_date=req["date_needed"] or None,
+        )
         print(f"[PROCESS] Wage lookup result: {wage}")
 
         result_item_id = monday.create_result_item(
@@ -35,6 +41,7 @@ def process_request_item(item_id: int) -> None:
             city_state_zip=req["city_state_zip"],
             county=location["county"],
             fips=location["fips"],
+            worker_classification=worker_classification,
             base_rate=wage["base_rate"],
             fringe_rate=wage["fringe_rate"],
             effective_date=wage["effective_date"],
@@ -51,6 +58,7 @@ def process_request_item(item_id: int) -> None:
             item_id=req["item_id"],
             body=(
                 f"Lookup completed.\n"
+                f"Worker: {worker_classification}\n"
                 f"County: {location['county']}\n"
                 f"FIPS: {location['fips']}\n"
                 f"Base: ${wage['base_rate']:.2f}\n"

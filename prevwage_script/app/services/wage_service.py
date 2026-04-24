@@ -13,7 +13,11 @@ import re
 
 WD_NUMBER_RE = re.compile(r"\b([A-Z]{2}\d{8})\b")
 
-def get_wage_from_db(fips: str, as_of_date: Optional[str] = None) -> Optional[Dict[str, Any]]:
+def get_wage_from_db(
+    fips: str,
+    worker_classification: str,
+    as_of_date: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
     conn = get_db_conn()
     cur = conn.cursor(dictionary=True)
 
@@ -24,11 +28,12 @@ def get_wage_from_db(fips: str, as_of_date: Optional[str] = None) -> Optional[Di
                 SELECT *
                 FROM wages
                 WHERE fips = %s
-                  AND effective_date <= %s
+                AND worker_classification = %s
+                AND effective_date <= %s
                 ORDER BY effective_date DESC
                 LIMIT 1
                 """,
-                (fips, as_of_date)
+                (fips, worker_classification, as_of_date)
             )
         else:
             cur.execute(
@@ -36,10 +41,11 @@ def get_wage_from_db(fips: str, as_of_date: Optional[str] = None) -> Optional[Di
                 SELECT *
                 FROM wages
                 WHERE fips = %s
+                AND worker_classification = %s
                 ORDER BY effective_date DESC
                 LIMIT 1
                 """,
-                (fips,)
+                (fips, worker_classification)
             )
 
         row = cur.fetchone()
@@ -54,6 +60,7 @@ def get_wage_from_db(fips: str, as_of_date: Optional[str] = None) -> Optional[Di
                 part for part in [row.get("source"), row.get("source_id")] if part
             ).strip(),
         }
+
     finally:
         cur.close()
         conn.close()
@@ -113,6 +120,7 @@ def save_wd_cache(
 
 def save_wage(
     fips: str,
+    worker_classification: str,
     base_rate: float,
     fringe_rate: float,
     effective_date: str,
@@ -129,13 +137,15 @@ def save_wage(
         cur.execute(
             """
             INSERT INTO wages (
-                fips, base_rate, fringe_rate, effective_date, expiration_date,
+                fips, worker_classification, base_rate, fringe_rate,
+                effective_date, expiration_date,
                 source, source_id, source_url, notes
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """,
             (
                 fips,
+                worker_classification,
                 base_rate,
                 fringe_rate,
                 effective_date,
@@ -185,24 +195,28 @@ def fetch_and_store_wage_from_sam(
         if wd_data:
             wd_text = wd_data.get("text", "")
             if expected_header in wd_text.upper():
-                millwright = extract_millwright_from_wd(wd_data)
-                if millwright:
-                    effective_date = millwright["effective_date"] or date.today().isoformat()
+                worker_wage = extract_worker_from_wd(
+                    wd_data,
+                    worker_classification=worker_classification,
+                )
+                if worker_wage:
+                    effective_date = worker_wage["effective_date"] or date.today().isoformat()
 
                     save_wage(
                         fips=fips,
-                        base_rate=millwright["base_rate"],
-                        fringe_rate=millwright["fringe_rate"],
+                        worker_classification=worker_classification,
+                        base_rate=worker_wage["base_rate"],
+                        fringe_rate=worker_wage["fringe_rate"],
                         effective_date=effective_date,
                         source="Davis-Bacon",
                         source_id=wd_number,
                         source_url=wd_url,
-                        notes=f"Fetched from SAM for {county_name}, {state_name}, {construction_type}",
-                    )
+                        notes=f"Fetched {worker_classification} from SAM for {county_name}, {state_name}, building",
+)
 
                     return {
-                        "base_rate": millwright["base_rate"],
-                        "fringe_rate": millwright["fringe_rate"],
+                        "base_rate": worker_wage["base_rate"],
+                        "fringe_rate": worker_wage["fringe_rate"],
                         "effective_date": effective_date,
                         "source_note": f"Davis-Bacon {wd_number}",
                     }
@@ -258,9 +272,13 @@ def fetch_and_store_wage_from_sam(
         wd_url = candidate_url
         detail_url = candidate_url
 
-        millwright = extract_millwright_from_wd(wd_data)
-        if not millwright:
-            print(f"[SAM] No Millwright line found in WD {wd_number}")
+        worker_wage = extract_worker_from_wd(
+        wd_data,
+            worker_classification=worker_classification,
+        )
+
+        if not worker_wage:
+            print(f"[SAM] No {worker_classification} line found in WD {wd_number}")
             continue
 
         # Cache only after validation succeeds
@@ -271,15 +289,15 @@ def fetch_and_store_wage_from_sam(
             wd_title=f"{county_name}, {state_name} - Building",
             source_url=wd_url,
             detail_url=detail_url,
-            effective_date=millwright.get("effective_date"),
+            effective_date=worker_wage.get("effective_date"),
         )
 
-        effective_date = millwright["effective_date"] or date.today().isoformat()
+        effective_date = worker_wage["effective_date"] or date.today().isoformat()
 
         save_wage(
             fips=fips,
-            base_rate=millwright["base_rate"],
-            fringe_rate=millwright["fringe_rate"],
+            base_rate=worker_wage["base_rate"],
+            fringe_rate=worker_wage["fringe_rate"],
             effective_date=effective_date,
             source="Davis-Bacon",
             source_id=wd_number,
@@ -288,8 +306,8 @@ def fetch_and_store_wage_from_sam(
         )
 
         return {
-            "base_rate": millwright["base_rate"],
-            "fringe_rate": millwright["fringe_rate"],
+            "base_rate": worker_wage["base_rate"],
+            "fringe_rate": worker_wage["fringe_rate"],
             "effective_date": effective_date,
             "source_note": f"Davis-Bacon {wd_number}",
         }
@@ -297,15 +315,24 @@ def fetch_and_store_wage_from_sam(
     print(f"[SAM] No candidate WD matched {county_name}, {state_name}")
     return None
 
-def lookup_millwright_wage(fips: str, as_of_date: Optional[str] = None) -> Dict[str, Any]:
-    print(f"[WAGE] Looking up wage for FIPS {fips}")
+def lookup_worker_wage(
+    fips: str,
+    worker_classification: str = "Millwright",
+    as_of_date: Optional[str] = None,
+) -> Dict[str, Any]:
+    print(f"[WAGE] Looking up {worker_classification} wage for FIPS {fips}")
 
-    wage = get_wage_from_db(fips, as_of_date)
+    wage = get_wage_from_db(
+        fips=fips,
+        worker_classification=worker_classification,
+        as_of_date=as_of_date,
+    )
+
     if wage:
-        print(f"[WAGE] Found wage in DB for {fips}")
+        print(f"[WAGE] Found {worker_classification} wage in DB for {fips}")
         return wage
 
-    print(f"[WAGE] No wage in DB for {fips}")
+    print(f"[WAGE] No {worker_classification} wage in DB for {fips}")
 
     wd_cache = get_cached_wd(fips)
     if wd_cache:
@@ -315,12 +342,14 @@ def lookup_millwright_wage(fips: str, as_of_date: Optional[str] = None) -> Dict[
 
     wage = fetch_and_store_wage_from_sam(
         fips=fips,
+        worker_classification=worker_classification,
         as_of_date=as_of_date,
         construction_type=DEFAULT_CONSTRUCTION_TYPE,
         wd_cache=wd_cache,
     )
+
     if wage:
         return wage
 
     print(f"[WAGE] SAM fallback returned nothing for {fips}")
-    raise RuntimeError(f"No wage found for FIPS {fips}")
+    raise RuntimeError(f"No {worker_classification} wage found for FIPS {fips}")

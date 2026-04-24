@@ -18,6 +18,8 @@ from app.config import (
     RES_COL_EFFECTIVE_DATE,
     RES_COL_STATUS,
     RES_STATUS_DONE,
+    REQ_WORKER_COL,
+    RES_WORKER_COL,
 )
 
 class MondayClient:
@@ -75,6 +77,7 @@ class MondayClient:
         city_state_zip: str,
         county: str,
         fips: str,
+        worker_classification: str,
         base_rate: float,
         fringe_rate: float,
         effective_date: str,
@@ -83,6 +86,7 @@ class MondayClient:
             RES_COL_CITY_STATE_ZIP: city_state_zip,
             RES_COL_COUNTY: county,
             RES_COL_FIPS: fips,
+            RES_WORKER_COL: {"label": worker_classification},
             RES_COL_BASE_RATE: base_rate,
             RES_COL_FRINGE_RATE: fringe_rate,
             RES_COL_EFFECTIVE_DATE: {"date": effective_date},
@@ -164,6 +168,7 @@ def parse_request_item(item: Dict[str, Any]) -> Dict[str, Any]:
         "project_name": item["name"],
         "city_state_zip": extract_column_text(item, REQ_COL_CITY_STATE_ZIP),
         "date_needed": extract_column_text(item, REQ_COL_DATE_NEEDED),
+        "worker_classification": extract_column_text(item, REQ_WORKER_COL) or "Millwright",
         "notes": extract_column_text(item, REQ_COL_NOTES),
     }
 

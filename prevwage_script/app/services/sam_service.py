@@ -12,15 +12,15 @@ HEADERS = {
     "User-Agent": "Mozilla/5.0",
 }
 
-RATE_LINE_RE = re.compile(
-    r"""
-    (?P<trade>MILLWRIGHT[^\n\r]*?)
-    (?P<base>\d{1,3}(?:\.\d{2})?)
-    \s*
-    (?P<fringe>\d{1,3}(?:\.\d{2})?|[A-Z].*)
-    """,
-    re.IGNORECASE | re.VERBOSE,
-)
+# RATE_LINE_RE = re.compile(
+#     r"""
+#     (?P<trade>MILLWRIGHT[^\n\r]*?)
+#     (?P<base>\d{1,3}(?:\.\d{2})?)
+#     \s*
+#     (?P<fringe>\d{1,3}(?:\.\d{2})?|[A-Z].*)
+#     """,
+#     re.IGNORECASE | re.VERBOSE,
+# )
 
 TXT_LINK_RE = re.compile(r"\.txt($|\?)", re.IGNORECASE)
 
@@ -37,6 +37,12 @@ CONSTRUCTION_LABELS = {
     "heavy": "Heavy",
     "highway": "Highway",
     "residential": "Residential",
+}
+
+WORKER_SEARCH_TERMS = {
+    "Millwright": ["MILLWRIGHT"],
+    "Plumber": ["PLUMBER", "PIPEFITTER"],
+    "Sheet Metal Worker": ["SHEET METAL WORKER", "SHEET METAL"],
 }
 
 def fill_autocomplete_field(page, aria_label: str, value: str, debug_name: str) -> bool:
@@ -699,48 +705,45 @@ def _normalize_effective_date(text: str) -> str:
     # pass through common formats for now
     return raw
 
-
-def extract_millwright_from_wd(wd_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+def extract_worker_from_wd(
+    wd_data: Dict[str, Any],
+    worker_classification: str,
+) -> Optional[Dict[str, Any]]:
     text = wd_data.get("text", "")
     if not text:
         return None
 
+    search_terms = WORKER_SEARCH_TERMS.get(
+        worker_classification,
+        [worker_classification.upper()],
+    )
+
     lines = [line.strip() for line in text.splitlines() if line.strip()]
 
     for i, line in enumerate(lines):
-        if "MILLWRIGHT" not in line.upper():
+        upper_line = line.upper()
+
+        if not any(term in upper_line for term in search_terms):
             continue
 
-        print(f"[SAM] Found candidate Millwright line: {line}")
+        print(f"[SAM] Found candidate {worker_classification} line: {line}")
 
-        rate_match = re.search(r"(\d{1,3}\.\d{2})", line)
-        if not rate_match and i + 1 < len(lines):
-            rate_match = re.search(r"(\d{1,3}\.\d{2})", lines[i + 1])
+        combined = line
+        if i + 1 < len(lines):
+            combined = f"{line} {lines[i + 1]}"
 
-        if not rate_match:
-            continue
+        rates = re.findall(r"\d{1,3}\.\d{2}", combined)
 
-        base_rate = float(rate_match.group(1))
+        if len(rates) >= 2:
+            effective_date = _normalize_effective_date(text)
 
-        fringe_rate = 0.0
-        fringe_match = re.search(r"(\d{1,3}\.\d{2}).*?(\d{1,3}\.\d{2})", line)
-        if fringe_match:
-            base_rate = float(fringe_match.group(1))
-            fringe_rate = float(fringe_match.group(2))
-        elif i + 1 < len(lines):
-            next_line = lines[i + 1]
-            next_match = re.search(r"(\d{1,3}\.\d{2})", next_line)
-            if next_match and float(next_match.group(1)) != base_rate:
-                fringe_rate = float(next_match.group(1))
+            return {
+                "base_rate": float(rates[0]),
+                "fringe_rate": float(rates[1]),
+                "effective_date": effective_date,
+                "matched_line": combined,
+                "worker_classification": worker_classification,
+            }
 
-        effective_date = _normalize_effective_date(text)
-
-        return {
-            "base_rate": base_rate,
-            "fringe_rate": fringe_rate,
-            "effective_date": effective_date,
-            "matched_line": line,
-        }
-
-    print("[SAM] No Millwright match found")
+    print(f"[SAM] No {worker_classification} match found")
     return None
