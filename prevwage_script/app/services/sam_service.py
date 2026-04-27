@@ -540,6 +540,26 @@ def search_sam_for_wd(
             browser.close()
             return None
 
+def wd_matches_county_state(
+    wd_text: str,
+    county_name: str,
+    state_name: str,
+) -> bool:
+    text_upper = wd_text.upper()
+    county_base = county_name.replace(" County", "").strip().upper()
+    state_upper = state_name.strip().upper()
+
+    expected_header = f"COUNTY: {county_name.upper()} IN {state_upper}"
+
+    if expected_header in text_upper:
+        return True
+
+    # Some WDs list many counties together instead of using a single County: header.
+    if county_base in text_upper and state_upper in text_upper:
+        return True
+
+    return False
+
 def fetch_wd_detail_from_sam(
     wd_number: str,
     wd_url: Optional[str] = None,

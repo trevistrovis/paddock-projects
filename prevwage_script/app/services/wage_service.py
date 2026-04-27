@@ -6,6 +6,7 @@ from app.services.location_service import get_county_by_fips
 from app.services.sam_service import (
     search_sam_for_wd,
     fetch_wd_detail_from_sam,
+    wd_matches_county_state,
     extract_worker_from_wd
 )
 import re
@@ -194,7 +195,7 @@ def fetch_and_store_wage_from_sam(
 
         if wd_data:
             wd_text = wd_data.get("text", "")
-            if expected_header in wd_text.upper():
+            if wd_matches_county_state(wd_text, county_name, state_name):
                 worker_wage = extract_worker_from_wd(
                     wd_data,
                     worker_classification=worker_classification,
@@ -263,8 +264,8 @@ def fetch_and_store_wage_from_sam(
             continue
 
         wd_text = wd_data.get("text", "")
-        if expected_header not in wd_text.upper():
-            print(f"[SAM] Candidate did not match expected county/state: {candidate_url}")
+        if not wd_matches_county_state(wd_text, county_name, state_name):
+            print(f"[SAM] Candidate did not match requested county/state: {candidate_url}")
             continue
 
         wd_match = WD_NUMBER_RE.search(wd_text.upper())
