@@ -149,7 +149,12 @@ def fill_autocomplete_field(page, aria_label: str, value: str, debug_name: str) 
 
 def select_exact_county_option(page, county_name: str) -> bool:
     try:
-        county_base = county_name.replace(" County", "").strip()
+        county_base = (
+            county_name
+            .replace(" County", "")
+            .replace(".", "")
+            .strip()
+        )
 
         county_input = page.locator('input[aria-label="wd-county"]').first
         county_input.wait_for(timeout=5000)
@@ -157,20 +162,23 @@ def select_exact_county_option(page, county_name: str) -> bool:
         county_input.fill("")
         county_input.fill(county_base)
         page.wait_for_timeout(1500)
-
         option_clicked = False
-        option_candidates = [
-            page.get_by_text(re.compile(rf"^{re.escape(county_base)}$", re.I)).first,
-            page.locator(f'text="{county_base}"').first,
-        ]
 
-        for option in option_candidates:
+        options = page.locator('[role="option"]')
+        option_count = options.count()
+
+        for i in range(option_count):
             try:
-                option.wait_for(timeout=4000)
-                option.click(force=True)
-                option_clicked = True
-                print(f"[SAM] Clicked county option: {county_base}")
-                break
+                option = options.nth(i)
+                option_text = (option.inner_text() or "").strip()
+                option_text_clean = normalize_county_for_match(option_text)
+
+                if county_base == option_text_clean:
+                    option.click(force=True)
+                    option_clicked = True
+                    print(f"[SAM] Clicked county option: {option_text}")
+                    break
+
             except Exception:
                 continue
 
