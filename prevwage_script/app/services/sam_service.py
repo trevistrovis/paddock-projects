@@ -45,6 +45,15 @@ WORKER_SEARCH_TERMS = {
     "Sheet Metal Worker": ["SHEET METAL WORKER", "SHEET METAL"],
 }
 
+def normalize_county_for_match(value: str) -> str:
+    return (
+        value
+        .replace(" County", "")
+        .replace(".", "")
+        .strip()
+        .lower()
+    )
+
 def fill_autocomplete_field(page, aria_label: str, value: str, debug_name: str) -> bool:
     try:
         field = page.locator(f'input[aria-label="{aria_label}"]').first
@@ -436,7 +445,7 @@ def search_sam_for_wd(
                 browser.close()
                 return None
 
-            county_base = county_name.replace(" County", "").strip().lower()
+            county_base = normalize_county_for_match(county_name)
             state_lower = state_name.strip().lower()
             construction_lower = "building"
 
@@ -482,7 +491,7 @@ def search_sam_for_wd(
                                 except Exception:
                                     card_text = link_text
 
-                        card_text_lower = card_text.lower()
+                        card_text_lower = normalize_county_for_match(card_text)
 
                         print(f"[SAM] Result card text sample: {card_text[:1000]}")
 
@@ -545,8 +554,8 @@ def wd_matches_county_state(
     county_name: str,
     state_name: str,
 ) -> bool:
-    text_upper = wd_text.upper()
-    county_base = county_name.replace(" County", "").strip().upper()
+    text_upper = normalize_county_for_match(wd_text).upper()
+    county_base = normalize_county_for_match(county_name).upper()
     state_upper = state_name.strip().upper()
 
     expected_header = f"COUNTY: {county_name.upper()} IN {state_upper}"
