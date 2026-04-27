@@ -162,31 +162,45 @@ def select_exact_county_option(page, county_name: str) -> bool:
         county_input.fill("")
         county_input.fill(county_base)
         page.wait_for_timeout(1500)
-        option_clicked = False
+
+        county_input.fill(county_base)
+        page.wait_for_timeout(2500)
 
         options = page.locator('[role="option"]')
         option_count = options.count()
+        print(f"[SAM] County dropdown option count: {option_count}")
+
+        for i in range(min(option_count, 20)):
+            try:
+                option_text = (options.nth(i).inner_text() or "").strip()
+                option_text_clean = normalize_county_for_match(option_text)
+                print(f"[SAM] County dropdown option[{i}]: raw='{option_text}', clean='{option_text_clean}'")
+            except Exception:
+                pass
+                option_clicked = False
+                options = page.locator('[role="option"]')
+                option_count = options.count()
+
+        option_clicked = False
 
         for i in range(option_count):
             try:
                 option = options.nth(i)
                 option_text = (option.inner_text() or "").strip()
                 option_text_clean = normalize_county_for_match(option_text)
-                print(f"[SAM] County dropdown option: raw='{option_text}', clean='{option_text_clean}'")
-                
-                if county_base == option_text_clean:
-                    is_exact_county = (
-                        option_text_clean == county_base
-                        or option_text_clean == f"{county_base} county"
-                    )
 
-                    is_wrong_city = "city" in option_text_clean
+                is_exact_county = (
+                    option_text_clean == county_base
+                    or option_text_clean == f"{county_base} county"
+                )
 
-                    if is_exact_county and not is_wrong_city:
-                        option.click(force=True)
-                        option_clicked = True
-                        print(f"[SAM] Clicked county option: {option_text}")
-                        break
+                is_wrong_city = "city" in option_text_clean
+
+                if is_exact_county and not is_wrong_city:
+                    option.click(force=True)
+                    option_clicked = True
+                    print(f"[SAM] Clicked county option: {option_text}")
+                    break
 
             except Exception:
                 continue
