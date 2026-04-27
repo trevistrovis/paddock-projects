@@ -297,6 +297,7 @@ def fetch_and_store_wage_from_sam(
 
         save_wage(
             fips=fips,
+            worker_classification=worker_classification,
             base_rate=worker_wage["base_rate"],
             fringe_rate=worker_wage["fringe_rate"],
             effective_date=effective_date,
