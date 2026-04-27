@@ -326,10 +326,19 @@ def search_sam_for_wd(
 
             print(f"[SAM] URL after DBA click: {page.url}")
 
+            page.wait_for_load_state("domcontentloaded", timeout=30000)
+            page.wait_for_timeout(5000)
+
             try:
-                page.locator("select, input").first.wait_for(timeout=15000)
+                page.locator("input").first.wait_for(state="attached", timeout=30000)
             except Exception as exc:
-                print(f"[SAM] No form controls appeared after DBA click: {exc}")
+                print(f"[SAM] No input controls appeared after DBA click: {exc}")
+                print(f"[SAM] URL after failed DBA click: {page.url}")
+                try:
+                    body_text = page.locator("body").inner_text(timeout=5000)
+                    print(f"[SAM] Body text after failed DBA click: {body_text[:1500]}")
+                except Exception:
+                    pass
                 browser.close()
                 return None
 
