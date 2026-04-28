@@ -149,12 +149,10 @@ def fill_autocomplete_field(page, aria_label: str, value: str, debug_name: str) 
 
 def select_exact_county_option(page, county_name: str) -> bool:
     try:
-        county_base = (
-            county_name
-            .replace(" County", "")
-            .replace(".", "")
-            .strip()
-        )
+        county_base = normalize_county_for_match(county_name)
+
+        county_input = page.locator('input[aria-label="wd-county"]').first
+        county_input.wait_for(timeout=5000)
 
         county_input.click(force=True)
         county_input.fill("")
@@ -164,11 +162,10 @@ def select_exact_county_option(page, county_name: str) -> bool:
 
         option_clicked = False
 
-        # Try likely SAM display formats
         county_display_options = [
-                county_base,
-                f"{county_base} county",
-            ]
+            county_base,
+            f"{county_base} county",
+        ]
 
         for candidate in county_display_options:
             try:
