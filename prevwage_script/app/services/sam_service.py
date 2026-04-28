@@ -156,56 +156,38 @@ def select_exact_county_option(page, county_name: str) -> bool:
             .strip()
         )
 
-        county_input = page.locator('input[aria-label="wd-county"]').first
-        county_input.wait_for(timeout=5000)
-        county_input.click()
+        county_input.click(force=True)
         county_input.fill("")
-        county_input.fill(county_base)
-        page.wait_for_timeout(1500)
-
-        county_input.fill(county_base)
+        page.wait_for_timeout(500)
+        county_input.type(county_base, delay=75)
         page.wait_for_timeout(2500)
-
-        options = page.locator('[role="option"]')
-        option_count = options.count()
-        print(f"[SAM] County dropdown option count: {option_count}")
-
-        for i in range(min(option_count, 20)):
-            try:
-                option_text = (options.nth(i).inner_text() or "").strip()
-                option_text_clean = normalize_county_for_match(option_text)
-                print(f"[SAM] County dropdown option[{i}]: raw='{option_text}', clean='{option_text_clean}'")
-            except Exception:
-                pass
-                option_clicked = False
-                options = page.locator('[role="option"]')
-                option_count = options.count()
 
         option_clicked = False
 
-        for i in range(option_count):
+        # Try likely SAM display formats
+        county_display_options = [
+                county_base,
+                f"{county_base} county",
+            ]
+
+        for candidate in county_display_options:
             try:
-                option = options.nth(i)
-                option_text = (option.inner_text() or "").strip()
-                option_text_clean = normalize_county_for_match(option_text)
+                option = page.get_by_text(
+                    re.compile(rf"^{re.escape(candidate)}$", re.I)
+                ).last
 
-                is_exact_county = (
-                    option_text_clean == county_base
-                    or option_text_clean == f"{county_base} county"
-                )
+                option.wait_for(timeout=5000)
+                option.click(force=True)
 
-                is_wrong_city = "city" in option_text_clean
-
-                if is_exact_county and not is_wrong_city:
-                    option.click(force=True)
-                    option_clicked = True
-                    print(f"[SAM] Clicked county option: {option_text}")
-                    break
+                option_clicked = True
+                print(f"[SAM] Clicked county option by text: {candidate}")
+                break
 
             except Exception:
                 continue
 
         if not option_clicked:
+            print(f"[SAM] Could not find exact county option text for: {county_base}")
             county_input.press("ArrowDown")
             page.wait_for_timeout(500)
             county_input.press("Enter")
@@ -213,14 +195,10 @@ def select_exact_county_option(page, county_name: str) -> bool:
             print("[SAM] Used keyboard fallback for county")
             return False
 
-        # Blur/commit the widget, but do not require the input to retain the value
         county_input.press("Tab")
         page.wait_for_timeout(1000)
 
-        selected = county_input.input_value().strip()
-        print(f"[SAM] County value now: {selected}")
-
-        # If we clicked the exact visible county option, count that as success.
+        print(f"[SAM] County value now: {county_input.input_value().strip()}")
         return True
 
     except Exception as exc:
