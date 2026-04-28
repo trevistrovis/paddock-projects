@@ -154,49 +154,29 @@ def select_exact_county_option(page, county_name: str) -> bool:
         county_input = page.locator('input[aria-label="wd-county"]').first
         county_input.wait_for(timeout=5000)
 
+        # Convert to SAM format (important!)
+        county_value = county_base.title()  # "st louis" → "St Louis"
+
         county_input.click(force=True)
         county_input.fill("")
-        page.wait_for_timeout(500)
-        county_input.type(county_base, delay=75)
-        page.wait_for_timeout(2500)
+        page.wait_for_timeout(300)
 
-        option_clicked = False
-
-        county_display_options = [
-            county_base,
-            f"{county_base} county",
-        ]
-
-        for candidate in county_display_options:
-            try:
-                option = page.get_by_text(
-                    re.compile(rf"^{re.escape(candidate)}$", re.I)
-                ).last
-
-                option.wait_for(timeout=5000)
-                option.click(force=True)
-
-                option_clicked = True
-                print(f"[SAM] Clicked county option by text: {candidate}")
-                break
-
-            except Exception:
-                continue
-
-        if not option_clicked:
-            print(f"[SAM] Could not find exact county option text for: {county_base}")
-            county_input.press("ArrowDown")
-            page.wait_for_timeout(500)
-            county_input.press("Enter")
-            page.wait_for_timeout(1000)
-            print("[SAM] Used keyboard fallback for county")
-            return False
-
-        county_input.press("Tab")
+        county_input.type(county_value, delay=75)
         page.wait_for_timeout(1000)
 
-        print(f"[SAM] County value now: {county_input.input_value().strip()}")
-        return True
+        # 🔥 This is the key — accept the dropdown selection
+        county_input.press("Enter")
+        page.wait_for_timeout(1000)
+
+        final_value = county_input.input_value().strip()
+        print(f"[SAM] County value now: {final_value}")
+
+        # Validate it actually stuck
+        if normalize_county_for_match(final_value) == county_base:
+            return True
+
+        print("[SAM] County input did not stick after Enter")
+        return False
 
     except Exception as exc:
         print(f"[SAM] Failed to select county: {exc}")
