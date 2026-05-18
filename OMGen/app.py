@@ -521,6 +521,168 @@ def regenerate_cover():
         logger.error(f"Error regenerating cover page: {str(e)}")
         return f"Error: {str(e)}", 500
 
+# File Management API Endpoints
+
+# Map folder names to their paths
+FOLDER_MAP = {
+    'maintenance': MAINTENANCE_DOCS,
+    'templates': TEMPLATE_FOLDER,
+    'warranty': WARRANTY_DOCS
+}
+
+@app.get('/api/files/<folder_type>')
+def api_list_files(folder_type):
+    """List PDF files in the specified folder."""
+    if folder_type not in FOLDER_MAP:
+        return jsonify({'error': f'Invalid folder type: {folder_type}'}), 400
+    
+    folder_path = FOLDER_MAP[folder_type]
+    try:
+        files = []
+        for fname in sorted(os.listdir(folder_path)):
+            if not fname.lower().endswith('.pdf'):
+                continue
+            fpath = os.path.join(folder_path, fname)
+            try:
+                stat = os.stat(fpath)
+                files.append({
+                    'name': fname,
+                    'size': stat.st_size,
+                    'mtime': stat.st_mtime,
+                    'size_human': _format_file_size(stat.st_size)
+                })
+            except Exception:
+                continue
+        return jsonify({'files': files, 'folder': folder_type})
+    except Exception as e:
+        logger.error(f"Error listing files in {folder_type}: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+def _format_file_size(size_bytes):
+    """Convert bytes to human readable format."""
+    if size_bytes < 1024:
+        return f"{size_bytes} B"
+    elif size_bytes < 1024 * 1024:
+        return f"{size_bytes / 1024:.1f} KB"
+    else:
+        return f"{size_bytes / (1024 * 1024):.1f} MB"
+
+
+@app.post('/api/upload/<folder_type>')
+def api_upload_file(folder_type):
+    """Upload a PDF file to the specified folder."""
+    if folder_type not in FOLDER_MAP:
+        return jsonify({'error': f'Invalid folder type: {folder_type}'}), 400
+    
+    if 'file' not in request.files:
+        return jsonify({'error': 'No file provided'}), 400
+    
+    file = request.files['file']
+    if file.filename == '':
+        return jsonify({'error': 'No file selected'}), 400
+    
+    if not file.filename.lower().endswith('.pdf'):
+        return jsonify({'error': 'Only PDF files are allowed'}), 400
+    
+    folder_path = FOLDER_MAP[folder_type]
+    filename = secure_filename(file.filename)
+    
+    # Check if file already exists
+    file_path = os.path.join(folder_path, filename)
+    if os.path.exists(file_path):
+        return jsonify({'error': f'File "{filename}" already exists. Delete it first to replace.'}), 409
+    
+    try:
+        file.save(file_path)
+        logger.info(f"Uploaded {filename} to {folder_type}")
+        return jsonify({
+            'success': True,
+            'message': f'File "{filename}" uploaded successfully',
+            'filename': filename
+        })
+    except Exception as e:
+        logger.error(f"Error uploading file to {folder_type}: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.get('/api/view/<folder_type>')
+def api_view_file(folder_type):
+    """Serve a PDF file from the specified folder for viewing."""
+    if folder_type not in FOLDER_MAP:
+        return jsonify({'error': f'Invalid folder type: {folder_type}'}), 400
+    
+    filename = request.args.get('filename', '')
+    if not filename:
+        return jsonify({'error': 'No filename provided'}), 400
+    
+    # Basic security validation without using secure_filename (which strips special chars)
+    if '..' in filename or filename.startswith('/') or filename.startswith('\\'):
+        return jsonify({'error': 'Invalid filename'}), 400
+    
+    folder_path = FOLDER_MAP[folder_type]
+    file_path = os.path.join(folder_path, filename)
+    
+    # Security check: ensure the file is within the target folder
+    if not os.path.realpath(file_path).startswith(os.path.realpath(folder_path)):
+        return jsonify({'error': 'Invalid file path'}), 403
+    
+    if not os.path.exists(file_path):
+        return jsonify({'error': f'File "{filename}" not found'}), 404
+    
+    # Ensure it's a PDF file
+    if not filename.lower().endswith('.pdf'):
+        return jsonify({'error': 'Only PDF files can be viewed'}), 400
+    
+    try:
+        logger.info(f"Serving file for viewing: {filename} from {folder_type}")
+        return send_file(file_path, mimetype='application/pdf')
+    except Exception as e:
+        logger.error(f"Error serving file {filename}: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.delete('/api/delete/<folder_type>')
+def api_delete_file(folder_type):
+    """Delete a PDF file from specified folder."""
+    if folder_type not in FOLDER_MAP:
+        return jsonify({'error': f'Invalid folder type: {folder_type}'}), 400
+    
+    data = request.get_json()
+    if not data or 'filename' not in data:
+        return jsonify({'error': 'No filename provided'}), 400
+    
+    filename = secure_filename(data['filename'])
+    folder_path = FOLDER_MAP[folder_type]
+    file_path = os.path.join(folder_path, filename)
+    
+    # Security check: ensure the file is within the target folder
+    if not os.path.realpath(file_path).startswith(os.path.realpath(folder_path)):
+        return jsonify({'error': 'Invalid file path'}), 403
+    
+    if not os.path.exists(file_path):
+        return jsonify({'error': f'File "{filename}" not found'}), 404
+    
+    try:
+        os.remove(file_path)
+        logger.info(f"Deleted {filename} from {folder_type}")
+        
+        # Also delete thumbnail if it exists in template_cache
+        if folder_type == 'templates':
+            thumb_path = os.path.join(THUMBNAIL_FOLDER, filename + '.png')
+            if os.path.exists(thumb_path):
+                os.remove(thumb_path)
+                logger.info(f"Deleted thumbnail for {filename}")
+        
+        return jsonify({
+            'success': True,
+            'message': f'File "{filename}" deleted successfully'
+        })
+    except Exception as e:
+        logger.error(f"Error deleting file from {folder_type}: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
 if __name__ == '__main__':
     # Only use debug mode when running directly
     is_debug = os.environ.get('FLASK_ENV') == 'development'
