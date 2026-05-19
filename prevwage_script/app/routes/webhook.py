@@ -4,7 +4,7 @@ from fastapi.responses import JSONResponse, Response
 from fastapi.concurrency import run_in_threadpool
 from starlette.requests import Request
 
-from app.config import REQ_STATUS_RATE_FOUND, REQ_STATUS_REVIEWED
+from app.config import REQ_STATUS_RATE_FOUND, REQ_STATUS_REVIEWED, ALL_WORKER_CLASSIFICATIONS
 from app.services.monday_service import (
     MondayClient,
     extract_item_id_from_webhook,
@@ -27,46 +27,79 @@ def process_request_item(item_id: int) -> None:
         location = resolve_location(req["city_state_zip"])
         print(f"[PROCESS] Resolved location: {location}")
 
-        worker_classification = req.get("worker_classification") or "Millwright"
+        # Loop through all worker classifications
+        result_item_ids = []
+        results_summary = []
+        failed_classifications = []
 
-        wage = lookup_worker_wage(
-            fips=location["fips"],
-            worker_classification=worker_classification,
-            as_of_date=req["date_needed"] or None,
-        )
-        print(f"[PROCESS] Wage lookup result: {wage}")
+        for worker_classification in ALL_WORKER_CLASSIFICATIONS:
+            print(f"[PROCESS] Looking up wage for {worker_classification}")
+            
+            try:
+                wage = lookup_worker_wage(
+                    fips=location["fips"],
+                    worker_classification=worker_classification,
+                    as_of_date=req["date_needed"] or None,
+                )
+                print(f"[PROCESS] Wage lookup result for {worker_classification}: {wage}")
 
-        result_item_id = monday.create_result_item(
-            project_name=req["project_name"],
-            city_state_zip=req["city_state_zip"],
-            county=location["county"],
-            fips=location["fips"],
-            worker_classification=worker_classification,
-            base_rate=wage["base_rate"],
-            fringe_rate=wage["fringe_rate"],
-            effective_date=wage["effective_date"],
-        )
-        print(f"[PROCESS] Created result item: {result_item_id}")
+                result_item_id = monday.create_result_item(
+                    project_name=req["project_name"],
+                    city_state_zip=req["city_state_zip"],
+                    county=location["county"],
+                    fips=location["fips"],
+                    worker_classification=worker_classification,
+                    base_rate=wage["base_rate"],
+                    fringe_rate=wage["fringe_rate"],
+                    effective_date=wage["effective_date"],
+                )
+                print(f"[PROCESS] Created result item for {worker_classification}: {result_item_id}")
+                
+                result_item_ids.append(result_item_id)
+                results_summary.append(
+                    f"{worker_classification}: Base=${wage['base_rate']:.2f}, Fringe=${wage['fringe_rate']:.2f}, Effective={wage['effective_date']}"
+                )
+                
+            except Exception as exc:
+                print(f"[PROCESS][ERROR] Failed to lookup {worker_classification}: {repr(exc)}")
+                failed_classifications.append(f"{worker_classification}: {str(exc)}")
+                continue
 
-        monday.update_request_status(
-            item_id=req["item_id"],
-            new_status=REQ_STATUS_RATE_FOUND,
-            notes=f"Rate found and written to results board item {result_item_id}.",
-        )
+        # Update request status with all results
+        if result_item_ids:
+            notes = f"Rates found for {len(result_item_ids)} worker classification(s). Result items: {', '.join(map(str, result_item_ids))}"
+            if failed_classifications:
+                notes += f"\nFailed classifications: {'; '.join(failed_classifications)}"
+            
+            monday.update_request_status(
+                item_id=req["item_id"],
+                new_status=REQ_STATUS_RATE_FOUND,
+                notes=notes,
+            )
 
-        monday.create_update(
-            item_id=req["item_id"],
-            body=(
-                f"Lookup completed.\n"
-                f"Worker: {worker_classification}\n"
-                f"County: {location['county']}\n"
-                f"FIPS: {location['fips']}\n"
-                f"Base: ${wage['base_rate']:.2f}\n"
-                f"Fringe: ${wage['fringe_rate']:.2f}\n"
-                f"Effective Date: {wage['effective_date']}\n"
-                f"{wage.get('source_note', '')}"
-            ),
-        )
+            # Create update with all results for comparison
+            update_body = (
+                f"Lookup completed for {location['county']} (FIPS: {location['fips']})\n\n"
+                f"Results:\n" + "\n".join(f"• {r}" for r in results_summary)
+            )
+            if failed_classifications:
+                update_body += f"\n\nFailed:\n" + "\n".join(f"• {f}" for f in failed_classifications)
+            
+            monday.create_update(
+                item_id=req["item_id"],
+                body=update_body,
+            )
+        else:
+            # All classifications failed
+            monday.update_request_status(
+                item_id=req["item_id"],
+                new_status=REQ_STATUS_REVIEWED,
+                notes=f"All wage lookups failed: {'; '.join(failed_classifications)}",
+            )
+            monday.create_update(
+                item_id=req["item_id"],
+                body=f"All wage lookups failed:\n" + "\n".join(f"• {f}" for f in failed_classifications),
+            )
 
     except Exception as exc:
         print(f"[PROCESS][ERROR] Item {item_id} failed: {repr(exc)}")

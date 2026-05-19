@@ -207,7 +207,7 @@ def set_results_per_page_to_100(page) -> None:
                 txt = (sel.text_content() or "").lower()
                 if "25" in txt and "100" in txt:
                     sel.select_option(label="100")
-                    page.wait_for_timeout(4000)
+                    page.wait_for_timeout(800)
                     print(f"[SAM] Set results per page to 100 using select[{i}]")
                     return
         except Exception as exc:

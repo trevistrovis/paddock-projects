@@ -41,3 +41,5 @@ REQ_STATUS_REVIEWED = "Reviewed"
 REQ_STATUS_FAILED = "Failed"
 
 RES_STATUS_DONE = "Done"
+
+ALL_WORKER_CLASSIFICATIONS = ["Millwright", "Plumber", "Sheet Metal Worker"]
