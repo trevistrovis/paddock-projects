@@ -42,4 +42,8 @@ REQ_STATUS_FAILED = "Failed"
 
 RES_STATUS_DONE = "Done"
 
-ALL_WORKER_CLASSIFICATIONS = ["Millwright", "Plumber", "Sheet Metal Worker"]
+ALL_WORKER_CLASSIFICATIONS = ["Millwright", "Plumber", "Sheet Metal Worker", "General Laborer"]
+
+# Concurrency controls
+MAX_CONCURRENT_SAM_SCRAPES = 2
+MAX_QUEUE_SIZE = 50

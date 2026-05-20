@@ -12,10 +12,11 @@ from app.services.monday_service import (
 )
 from app.services.location_service import resolve_location
 from app.services.wage_service import lookup_worker_wage
+from app.services.queue_service import RequestQueue
 
 router = APIRouter()
 
-def process_request_item(item_id: int) -> None:
+async def process_request_item(item_id: int) -> None:
     print(f"[PROCESS] Starting item {item_id}")
     monday = MondayClient()
 
@@ -36,7 +37,8 @@ def process_request_item(item_id: int) -> None:
             print(f"[PROCESS] Looking up wage for {worker_classification}")
             
             try:
-                wage = lookup_worker_wage(
+                wage = await run_in_threadpool(
+                    lookup_worker_wage,
                     fips=location["fips"],
                     worker_classification=worker_classification,
                     as_of_date=req["date_needed"] or None,
@@ -139,11 +141,18 @@ async def monday_webhook(request: Request):
             content={"ok": False, "error": "Could not determine item ID from webhook payload"},
         )
 
-    await run_in_threadpool(process_request_item, item_id)
+    queue = RequestQueue.get_instance()
+    enqueued = await queue.enqueue(item_id)
+
+    if not enqueued:
+        return JSONResponse(
+            status_code=503,
+            content={"ok": False, "error": "Queue is full, please try again later"},
+        )
 
     return JSONResponse(
         status_code=200,
-        content={"ok": True, "message": f"Processed item {item_id}"},
+        content={"ok": True, "message": f"Enqueued item {item_id} for processing", "queue_size": queue.queue_size()},
     )
 
 @router.get("/test-location")

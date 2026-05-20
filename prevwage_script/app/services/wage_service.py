@@ -9,6 +9,7 @@ from app.services.sam_service import (
     wd_matches_county_state,
     extract_worker_from_wd
 )
+from app.services.queue_service import RequestQueue
 import re
 
 WD_NUMBER_RE = re.compile(r"\b([A-Z]{2}\d{8})\b")
@@ -168,6 +169,9 @@ def fetch_and_store_wage_from_sam(
     construction_type: str = DEFAULT_CONSTRUCTION_TYPE,
     wd_cache: Optional[Dict[str, Any]] = None,
 ) -> Optional[Dict[str, Any]]:
+    queue = RequestQueue.get_instance()
+    sam_semaphore = queue.get_sam_semaphore()
+    
     county_info = get_county_by_fips(fips)
     state_name = county_info["state_name"]
     county_name = county_info["county_name"]
@@ -191,7 +195,8 @@ def fetch_and_store_wage_from_sam(
             f"source_url={wd_cache.get('source_url')}, detail_url={wd_cache.get('detail_url')}"
         )
 
-        wd_data = fetch_wd_detail_from_sam(wd_number=wd_number, wd_url=wd_url)
+        with sam_semaphore:
+            wd_data = fetch_wd_detail_from_sam(wd_number=wd_number, wd_url=wd_url)
 
         if wd_data:
             wd_text = wd_data.get("text", "")
@@ -224,98 +229,99 @@ def fetch_and_store_wage_from_sam(
 
         print(f"[SAM] Cached WD failed for {fips}, falling back to fresh discovery...")
 
-    # Fresh search
-    search_result = search_sam_for_wd(
-        state_name=state_name,
-        county_name=county_name,
-        construction_type=construction_type,
-    )
-
-    print(f"[SAM] search_sam_for_wd result: {search_result}")
-
-    if not search_result:
-        print(f"[SAM] No WD search result found for {county_name}, {state_name}")
-        return None
-
-    candidate_urls = search_result.get("candidates", [])
-
-# fallback to single returned WD URL
-    if not candidate_urls:
-        single_url = search_result.get("source_url") or search_result.get("detail_url")
-        if single_url:
-            candidate_urls = [single_url]
-
-    print(f"[SAM] Candidate URL count returned from search: {len(candidate_urls)}")
-
-    if not candidate_urls:
-        print("[SAM] No candidate URLs returned from search")
-        return None
-
-    # Try each candidate until the downloaded WD text matches county/state
-    for candidate_url in candidate_urls:
-        print(f"[SAM] Trying candidate WD URL: {candidate_url}")
-
-        wd_data = fetch_wd_detail_from_sam(
-            wd_number="UNKNOWN",
-            wd_url=candidate_url,
-        )
-
-        if not wd_data:
-            continue
-
-        wd_text = wd_data.get("text", "")
-        if not wd_matches_county_state(wd_text, county_name, state_name):
-            print(f"[SAM] Candidate did not match requested county/state: {candidate_url}")
-            continue
-
-        wd_match = WD_NUMBER_RE.search(wd_text.upper())
-        wd_number = wd_match.group(1) if wd_match else "UNKNOWN"
-        wd_url = candidate_url
-        detail_url = candidate_url
-
-        worker_wage = extract_worker_from_wd(
-        wd_data,
-            worker_classification=worker_classification,
-        )
-
-        if not worker_wage:
-            print(f"[SAM] No {worker_classification} line found in WD {wd_number}")
-            continue
-
-        # Cache only after validation succeeds
-        save_wd_cache(
-            fips=fips,
-            wd_number=wd_number,
+    # Fresh search - use semaphore to limit concurrent SAM.gov scrapes
+    with sam_semaphore:
+        search_result = search_sam_for_wd(
+            state_name=state_name,
+            county_name=county_name,
             construction_type=construction_type,
-            wd_title=f"{county_name}, {state_name} - Building",
-            source_url=wd_url,
-            detail_url=detail_url,
-            effective_date=worker_wage.get("effective_date"),
         )
 
-        effective_date = worker_wage["effective_date"] or date.today().isoformat()
+        print(f"[SAM] search_sam_for_wd result: {search_result}")
 
-        save_wage(
-            fips=fips,
-            worker_classification=worker_classification,
-            base_rate=worker_wage["base_rate"],
-            fringe_rate=worker_wage["fringe_rate"],
-            effective_date=effective_date,
-            source="Davis-Bacon",
-            source_id=wd_number,
-            source_url=wd_url,
-            notes=f"Fetched from SAM for {county_name}, {state_name}, {construction_type}",
-        )
+        if not search_result:
+            print(f"[SAM] No WD search result found for {county_name}, {state_name}")
+            return None
 
-        return {
-            "base_rate": worker_wage["base_rate"],
-            "fringe_rate": worker_wage["fringe_rate"],
-            "effective_date": effective_date,
-            "source_note": f"Davis-Bacon {wd_number}",
-        }
+        candidate_urls = search_result.get("candidates", [])
 
-    print(f"[SAM] No candidate WD matched {county_name}, {state_name}")
-    return None
+        # fallback to single returned WD URL
+        if not candidate_urls:
+            single_url = search_result.get("source_url") or search_result.get("detail_url")
+            if single_url:
+                candidate_urls = [single_url]
+
+        print(f"[SAM] Candidate URL count returned from search: {len(candidate_urls)}")
+
+        if not candidate_urls:
+            print("[SAM] No candidate URLs returned from search")
+            return None
+
+        # Try each candidate until the downloaded WD text matches county/state
+        for candidate_url in candidate_urls:
+            print(f"[SAM] Trying candidate WD URL: {candidate_url}")
+
+            wd_data = fetch_wd_detail_from_sam(
+                wd_number="UNKNOWN",
+                wd_url=candidate_url,
+            )
+
+            if not wd_data:
+                continue
+
+            wd_text = wd_data.get("text", "")
+            if not wd_matches_county_state(wd_text, county_name, state_name):
+                print(f"[SAM] Candidate did not match requested county/state: {candidate_url}")
+                continue
+
+            wd_match = WD_NUMBER_RE.search(wd_text.upper())
+            wd_number = wd_match.group(1) if wd_match else "UNKNOWN"
+            wd_url = candidate_url
+            detail_url = candidate_url
+
+            worker_wage = extract_worker_from_wd(
+            wd_data,
+                worker_classification=worker_classification,
+            )
+
+            if not worker_wage:
+                print(f"[SAM] No {worker_classification} line found in WD {wd_number}")
+                continue
+
+            # Cache only after validation succeeds
+            save_wd_cache(
+                fips=fips,
+                wd_number=wd_number,
+                construction_type=construction_type,
+                wd_title=f"{county_name}, {state_name} - Building",
+                source_url=wd_url,
+                detail_url=detail_url,
+                effective_date=worker_wage.get("effective_date"),
+            )
+
+            effective_date = worker_wage["effective_date"] or date.today().isoformat()
+
+            save_wage(
+                fips=fips,
+                worker_classification=worker_classification,
+                base_rate=worker_wage["base_rate"],
+                fringe_rate=worker_wage["fringe_rate"],
+                effective_date=effective_date,
+                source="Davis-Bacon",
+                source_id=wd_number,
+                source_url=wd_url,
+                notes=f"Fetched from SAM for {county_name}, {state_name}, {construction_type}",
+            )
+
+            return {
+                "base_rate": worker_wage["base_rate"],
+                "fringe_rate": worker_wage["fringe_rate"],
+                "effective_date": effective_date,
+                "source_note": f"Davis-Bacon {wd_number}",
+            }
+
+        print(f"[SAM] No candidate WD matched {county_name}, {state_name}")
+        return None
 
 def lookup_worker_wage(
     fips: str,

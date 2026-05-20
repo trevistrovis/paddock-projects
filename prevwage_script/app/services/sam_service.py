@@ -43,6 +43,7 @@ WORKER_SEARCH_TERMS = {
     "Millwright": ["MILLWRIGHT"],
     "Plumber": ["PLUMBER", "PIPEFITTER"],
     "Sheet Metal Worker": ["SHEET METAL WORKER", "SHEET METAL"],
+    "General Laborer": ["LABORER: COMMON OR GENERAL", "LABORER", "GENERAL LABORER"],
 }
 
 def normalize_county_for_match(value: str) -> str:
