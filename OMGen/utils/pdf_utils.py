@@ -804,7 +804,7 @@ def add_gutter_form_fields_in_pdf(pdf_path):
         logger.error(f"Error processing {pdf_path} for adding gutter form fields: {e}")
         return False
 
-def fill_gutter_maintenance_doc(pdf_path, gutter_data):
+def fill_gutter_maintenance_doc(pdf_path, gutter_data, gutter_name=None):
     """
     Ensure a gutter maintenance PDF has fields, then fill with gutter_data.
     Returns the filled path if filled, otherwise original path.
@@ -814,7 +814,8 @@ def fill_gutter_maintenance_doc(pdf_path, gutter_data):
         if not has_fields:
             logger.info(f"No gutter fields found in {os.path.basename(pdf_path)}, attempting to add.")
             add_gutter_form_fields_in_pdf(pdf_path)
-        filled = fill_pdf_form_fields(pdf_path, flow_data={}, filter_name=None, gutter_data=gutter_data)
+        # Use gutter_name as filter_name to create unique output file
+        filled = fill_pdf_form_fields(pdf_path, flow_data={}, filter_name=gutter_name, gutter_data=gutter_data)
         return filled or pdf_path
     except Exception as e:
         logger.error(f"Error filling gutter maintenance doc {pdf_path}: {e}")
@@ -1323,7 +1324,7 @@ def organize_files_by_section(cover_page, templates, maintenance_docs, job_files
             logger.error(f"Error inserting always-include docs after cover: {e}")
     
     # Prepare Maintenance & Operation section and separate gutter care from other docs
-    primary_gutter_doc = None
+    gutter_care_docs = []
     remaining_maintenance = []
     if maintenance_docs:
         try:
@@ -1332,11 +1333,11 @@ def organize_files_by_section(cover_page, templates, maintenance_docs, job_files
         except Exception:
             filtered = maintenance_docs
 
-        # Identify filled gutter care doc (e.g., filled_gutter_care*.pdf)
+        # Identify all filled gutter care docs (e.g., filled_gutter_care*.pdf)
         for p in filtered:
             base = os.path.basename(p).lower()
-            if "gutter_care" in base and primary_gutter_doc is None:
-                primary_gutter_doc = p
+            if "gutter_care" in base:
+                gutter_care_docs.append(p)
             else:
                 remaining_maintenance.append(p)
 
@@ -1344,10 +1345,11 @@ def organize_files_by_section(cover_page, templates, maintenance_docs, job_files
         organized_files.append(maintenance_header)
         logger.info("Added maintenance header to organized files")
 
-        # Place filled gutter care doc first in Maintenance & Operation, if present
-        if primary_gutter_doc:
-            organized_files.append(primary_gutter_doc)
-            logger.info(f"Placed primary gutter maintenance doc first: {os.path.basename(primary_gutter_doc)}")
+        # Place all gutter care docs first in Maintenance & Operation, if present
+        if gutter_care_docs:
+            for gutter_doc in gutter_care_docs:
+                organized_files.append(gutter_doc)
+                logger.info(f"Placed gutter maintenance doc: {os.path.basename(gutter_doc)}")
 
     # Add Equipment Templates section immediately after the primary gutter doc
     if templates:

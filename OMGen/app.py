@@ -110,32 +110,36 @@ def index():
             'total_dynamic_head': '',
         }
 
-        # Collect gutter information (optional)
-        gutter_features = request.form.getlist('gutter_features') or []
-        raw_has_grating = request.form.get('has_grating')
-        # Only record a value when the checkbox is actually checked; otherwise treat as blank
-        has_grating = 'Yes' if raw_has_grating == 'yes' else ''
-
-        gutter_data = {
-            'inlet_count': request.form.get('inlet_count', ''),
-            'inlet_size': request.form.get('inlet_size', ''),
-            'drawing_number': request.form.get('drawing_number', ''),
-            'gutter_option': request.form.get('gutter_option', ''),
-            'has_grating': has_grating,
-            'gutter_features': gutter_features,
-            'gutter_features_text': ", ".join(gutter_features) if gutter_features else ''
-        }
-
-        # If all gutter fields are effectively empty, disable gutter_data entirely
-        if not any(gutter_data.get(k) for k in [
-            'inlet_count',
-            'inlet_size',
-            'drawing_number',
-            'gutter_option',
-            'has_grating',
-            'gutter_features_text',
-        ]):
-            gutter_data = None
+        # Collect gutter information for multiple gutters (optional)
+        gutter_count = int(request.form.get('gutter_count', '1'))
+        
+        # Create a list to store gutter data for each gutter
+        gutters_data = []
+        
+        for i in range(1, gutter_count + 1):
+            gutter_features = request.form.getlist(f'gutter_features_{i}') or []
+            raw_has_grating = request.form.get(f'has_grating_{i}')
+            # Only record a value when the checkbox is actually checked; otherwise treat as blank
+            has_grating = 'Yes' if raw_has_grating == 'yes' else ''
+            
+            gutter_data = {
+                'gutter_name': request.form.get(f'gutter_name_{i}', f'Gutter {i}'),
+                'inlet_count': request.form.get(f'inlet_count_{i}', ''),
+                'inlet_size': request.form.get(f'inlet_size_{i}', ''),
+                'drawing_number': request.form.get(f'drawing_number_{i}', ''),
+                'gutter_option': request.form.get(f'gutter_option_{i}', ''),
+                'has_grating': has_grating,
+                'gutter_features': gutter_features,
+                'gutter_features_text': ", ".join(gutter_features) if gutter_features else '',
+                'gutter_id': str(i)  # Store the gutter ID for mapping
+            }
+            # Only add gutters that have at least one value filled
+            if any(value for key, value in gutter_data.items() if key not in ['gutter_name', 'gutter_id']):
+                gutters_data.append(gutter_data)
+                logger.info(f"Added gutter data for {gutter_data['gutter_name']}")
+        
+        # For backward compatibility, use the first gutter's data as the main gutter_data if any exist
+        gutter_data = gutters_data[0] if gutters_data else None
 
         sales_order = request.files['sales_order']
         ot_file = request.files.get('ot_file')
@@ -217,29 +221,35 @@ def index():
         logger.info(f"Total templates returned: {len(templates)}")
         logger.info(f"Matched maintenance docs: {[os.path.basename(d) for d in maintenance_docs]}")
 
-        # If any gutter data provided, ensure gutter_care.pdf is filled with those fields
-        if gutter_data and any(gutter_data.get(k) for k in [
-            'inlet_count',
-            'inlet_size',
-            'drawing_number',
-            'gutter_option',
-            'has_grating',
-            'gutter_features_text',
-        ]):
+        # If any gutter data provided, ensure gutter_care.pdf is filled for each gutter
+        if gutters_data:
             try:
                 gutter_care_path = os.path.join(MAINTENANCE_DOCS, 'gutter_care.pdf')
                 if os.path.exists(gutter_care_path):
-                    filled_gutter_care = fill_gutter_maintenance_doc(gutter_care_path, gutter_data)
-                    # Replace existing occurrence or append
-                    replaced = False
-                    for i, p in enumerate(maintenance_docs):
-                        if os.path.basename(p).lower() == 'gutter_care.pdf':
-                            maintenance_docs[i] = filled_gutter_care
-                            replaced = True
-                            break
-                    if not replaced:
-                        maintenance_docs.append(filled_gutter_care)
-                    logger.info("Processed gutter_care.pdf with gutter data")
+                    # Remove any existing gutter_care.pdf references from maintenance_docs
+                    maintenance_docs = [p for p in maintenance_docs if 'gutter_care.pdf' not in os.path.basename(p).lower()]
+                    
+                    # Fill gutter_care.pdf for each gutter
+                    gutter_care_docs = []
+                    for gutter in gutters_data:
+                        if any(gutter.get(k) for k in [
+                            'inlet_count',
+                            'inlet_size',
+                            'drawing_number',
+                            'gutter_option',
+                            'has_grating',
+                            'gutter_features_text',
+                        ]):
+                            # Create a safe name for the output file
+                            gutter_name_safe = gutter.get('gutter_name', f'Gutter_{gutter.get("gutter_id", 0)}')
+                            gutter_name_safe = gutter_name_safe.replace(' ', '_').replace('/', '_').replace('\\', '_')
+                            
+                            filled_gutter_care = fill_gutter_maintenance_doc(gutter_care_path, gutter, gutter_name=gutter_name_safe)
+                            gutter_care_docs.append(filled_gutter_care)
+                            logger.info(f"Processed gutter_care.pdf for {gutter['gutter_name']}")
+                    
+                    # Add all gutter care docs to maintenance_docs (they will be placed at the beginning by organize_files_by_section)
+                    maintenance_docs = gutter_care_docs + maintenance_docs
                 else:
                     logger.warning(f"gutter_care.pdf not found in maintenance docs folder: {gutter_care_path}")
             except Exception as e:
