@@ -15,22 +15,36 @@ def extract_items_from_sales_order(pdf_path):
     doc = fitz.open(pdf_path)
     keywords = set()
     
-    # Common equipment terms and their variations
+    # Common equipment terms and their variations (expanded)
     equipment_terms = {
-        "filter": ["filter", "filtration", "filtering", "horizontal filter", "vertical filter"],
-        "grate": ["grate", "grating", "floor grating", "gutter grating"],
-        "platform": ["platform", "walkway", "catwalk", "mezzanine"],
-        "bulkhead": ["bulkhead", "partition", "wall panel"],
-        "pump": ["pump", "pumping", "circulation"],
-        "tank": ["tank", "vessel", "container", "fiberglass tank", "fiberglass vessel", "fiberglass container"],
-        "valve": ["valve", "control valve", "check valve"],
-        "strainer": ["strainer", "screen", "separator"],
-        "meter": ["meter", "flow meter", "gauge"],
-        "sensor": ["sensor", "detector", "probe"],
-        "gutter": ["gutter", "gutter grating", "gutter grate", "perimeter overflow", "recirculation", "recirculation system"],
-        "main drain": ["main drain", "main drain grate", "sump pump", "MD", "md"],
-        "regenerator": ["regenerator", "regen", "regenerative", "regenerative filter", "regen filter", "regenerative filtration", "regen filtration", "PPEC1400S", "PPEC1200S", "PPEC2100S", "PPEC500S", "PPEC700S", "PPEC225S", "PPEC900S", "PPEC350S", "PPEC"]
+        "filter": ["filter", "filtration", "filtering", "horizontal filter", "vertical filter", "sand filter", "cartridge filter", "diatomaceous filter", "DE filter"],
+        "grate": ["grate", "grating", "floor grating", "gutter grating", "deck grate", "pool grate"],
+        "platform": ["platform", "walkway", "catwalk", "mezzanine", "starting platform", "starting block"],
+        "bulkhead": ["bulkhead", "partition", "wall panel", "bulkhead door"],
+        "pump": ["pump", "pumping", "circulation", "circulation pump", "variable speed pump", "vs pump"],
+        "tank": ["tank", "vessel", "container", "fiberglass tank", "fiberglass vessel", "fiberglass container", "surge tank"],
+        "valve": ["valve", "control valve", "check valve", "butterfly valve", "gate valve", "ball valve"],
+        "strainer": ["strainer", "screen", "separator", "hair strainer", "lint strainer"],
+        "meter": ["meter", "flow meter", "gauge", "flow gauge"],
+        "sensor": ["sensor", "detector", "probe", "pressure sensor", "temperature sensor"],
+        "gutter": ["gutter", "gutter grating", "gutter grate", "perimeter overflow", "recirculation", "recirculation system", "overflow gutter"],
+        "main drain": ["main drain", "main drain grate", "sump pump", "MD", "md", "main drain cover"],
+        "regenerator": ["regenerator", "regen", "regenerative", "regenerative filter", "regen filter", "regenerative filtration", "regen filtration"],
+        "evacuator": ["evacuator", "evac", "evacuator system", "vacuum system"],
+        "heater": ["heater", "heat pump", "gas heater", "electric heater"],
+        "chlorinator": ["chlorinator", "salt chlorinator", "salt cell", "chlorine generator"],
+        "light": ["light", "lighting", "led light", "pool light", "underwater light"],
+        "skimmer": ["skimmer", "surface skimmer", "automatic skimmer"],
+        "drain": ["drain", "floor drain", "bottom drain", "drain cover"]
     }
+    
+    # Model number patterns (more flexible)
+    model_patterns = [
+        r'PPEC\d+S',  # PPEC model numbers
+        r'\d{3,4}S',  # 3-4 digit numbers ending in S
+        r'VSC\d+',    # VSC model numbers
+        r'[A-Z]{2,4}\d{3,4}[A-Z]?',  # General model pattern (letters + numbers + optional letter)
+    ]
     
     logger.info(f"Processing PDF for keywords: {pdf_path}")
     
@@ -43,33 +57,45 @@ def extract_items_from_sales_order(pdf_path):
             if not line_lower:
                 continue
                 
-            # Skip very long lines as they're likely not product names
-            if len(line_lower) > 100:
+            # Skip lines that are just numbers or dates
+            if line_lower.replace('.','').replace('/','').replace('-','').isdigit():
+                logger.debug(f"Skipping line that's just numbers/date: {line_lower}")
                 continue
-                
-            # Split line by commas to handle comma-separated product descriptions
-            parts = line_lower.split(',')
+            
+            # Split line by multiple delimiters (commas, tabs, semicolons)
+            delimiters = [',', '\t', ';', '|']
+            parts = [line_lower]
+            for delim in delimiters:
+                new_parts = []
+                for part in parts:
+                    new_parts.extend(part.split(delim))
+                parts = new_parts
+            
             for part in parts:
                 part = part.strip()
                 if not part:
                     continue
                     
                 # Skip parts that are just numbers
-                if part.replace('.','').isdigit():
+                if part.replace('.','').replace('-','').isdigit():
                     continue
                 
-                # Check for equipment terms and their variations
+                # Check for equipment terms and their variations (check all categories, don't break)
+                found_category = False
                 for category, variations in equipment_terms.items():
                     if any(term in part for term in variations):
                         # Clean up the line by removing common prefixes and suffixes
                         cleaned_part = clean_product_line(part)
                         if cleaned_part:
                             keywords.add(cleaned_part)
-                            # Also add the original part if it contains a model number
-                            if any(model in part for model in ['PPEC', '1400S', '1200S', '2100S', '500S', '700S', '225S', '900S', '350S']):
-                                keywords.add(part)
                             logger.debug(f"Found keyword in category '{category}': {cleaned_part}")
-                        break
+                            found_category = True
+                
+                # Check for model numbers using patterns
+                for pattern in model_patterns:
+                    if re.search(pattern, part, re.IGNORECASE):
+                        keywords.add(part)
+                        logger.debug(f"Found model number pattern: {part}")
     
     logger.info(f"Extracted {len(keywords)} keywords from {pdf_path}")
     return list(keywords)
@@ -436,7 +462,7 @@ def match_templates(keywords, template_dir, flow_data=None, filters_data=None, t
             if bool(words_in_filename & flow_related_terms):
                 flow_templates.add(file_path)
         
-        # Second pass: Match all templates
+        # Second pass: Match all templates with improved precision
         for filename in template_files:
             file_path = os.path.join(template_dir, filename)
             normalized_filename = normalize_text(os.path.splitext(filename)[0])
@@ -445,21 +471,40 @@ def match_templates(keywords, template_dir, flow_data=None, filters_data=None, t
             # Track match quality (higher is better)
             match_quality = 0
             matching_terms = set()
+            has_exact_keyword_match = False
+            
+            # Give higher weight to specific equipment types over generic terms
+            specific_terms = {'regen', 'regenerator', 'vertical', 'horizontal', 'vacsand', 'cell', 'stacked', 'linkage', 'actuated', 'manual', 'ppec'}
+            generic_terms = {'filter', 'template', 'pdf', 'care', 'maintenance', 'guide'}
             
             for term in search_terms:
-                # Check for exact matches first
-                if term in normalized_filename:
-                    match_quality += 2
+                term_lower = term.lower()
+                # Check for exact matches first (highest priority)
+                if term_lower in normalized_filename:
+                    if term_lower in specific_terms:
+                        match_quality += 3  # Highest weight for specific equipment types
+                        has_exact_keyword_match = True
+                    elif term_lower not in generic_terms:
+                        match_quality += 2  # Medium weight for non-generic terms
+                    else:
+                        match_quality += 0.5  # Low weight for generic terms
                     matching_terms.add(term)
-                # Then check for partial word matches
-                elif any(term in word for word in words_in_filename):
-                    match_quality += 1
+                # Then check for partial word matches (lower priority)
+                elif any(term_lower in word for word in words_in_filename):
+                    if term_lower in specific_terms:
+                        match_quality += 2  # Good weight for partial specific matches
+                    elif term_lower not in generic_terms:
+                        match_quality += 1  # Regular weight for partial non-generic matches
+                    # Ignore partial generic term matches entirely
                     matching_terms.add(term)
             
-            # Add file if we have any matches
-            if match_quality > 0:
+            # Only add file if we have an exact keyword match from the original keywords list
+            # This prevents matching based on derived search terms like individual words
+            if has_exact_keyword_match:
                 matched_templates.add(file_path)
-                logger.info(f"Matched template '{filename}' with terms: {matching_terms} (quality: {match_quality})")
+                logger.info(f"Matched template '{filename}' with terms: {matching_terms} (quality: {match_quality}, exact: {has_exact_keyword_match})")
+            elif match_quality > 0:
+                logger.debug(f"Skipped template '{filename}' - no exact keyword match (quality: {match_quality}, terms: {matching_terms})")
     
     # Then check for maintenance docs based on keywords
     logger.info(f"Checking keywords for maintenance docs")
@@ -559,12 +604,42 @@ def match_templates(keywords, template_dir, flow_data=None, filters_data=None, t
                 
                 # If no mapping or mapping failed, use the old approach (create a copy for each filter)
                 elif filters_data and not mapped_filter_id:
-                    logger.info(f"No mapping for template {template_name}, creating copies for all filters")
+                    logger.info(f"No mapping for template {template_name}, creating copies for filters")
                     
-                    # For templates with flow fields, create a copy for each filter
-                    for i, filter_data in enumerate(filters_data):
-                        filter_name = filter_data.get('filter_name', f'Filter {i+1}')
-                        logger.info(f"Processing filter {i+1}/{len(filters_data)}: {filter_name}")
+                    # Only create multiple copies if there are actually multiple filters
+                    if len(filters_data) > 1:
+                        # For templates with flow fields, create a copy for each filter
+                        for i, filter_data in enumerate(filters_data):
+                            filter_name = filter_data.get('filter_name', f'Filter {i+1}')
+                            logger.info(f"Processing filter {i+1}/{len(filters_data)}: {filter_name}")
+                            
+                            # Create a unique name for this filter's copy of the template
+                            output_dir = os.path.join(os.path.dirname(template_path), 'filled')
+                            os.makedirs(output_dir, exist_ok=True)
+                            base_name = template_name
+                            filter_name_safe = filter_name.replace(' ', '_').replace('/', '_').replace('\\', '_')
+                            
+                            # Create a unique identifier
+                            timestamp = int(time.time() * 1000) + i
+                            unique_id = f'{filter_name_safe}_{timestamp}'
+                            
+                            # Try to fill the template with this filter's data
+                            filled_path = fill_pdf_form_fields(template_path, filter_data, filter_name=unique_id, gutter_data=gutter_data)
+                            
+                            if filled_path:
+                                logger.info(f"Successfully filled template for {filter_name}, path: {filled_path}")
+                                filled_templates.append(filled_path)
+                                break  # Only use the first successful fill
+                        
+                        # If no filter worked, add the original template
+                        if len(filled_templates) == 0 or filled_templates[-1] != filled_path:
+                            logger.warning(f"Could not fill template with any filter data, using original")
+                            filled_templates.append(template_path)
+                    else:
+                        # Only one filter, just fill once
+                        filter_data = filters_data[0]
+                        filter_name = filter_data.get('filter_name', 'Filter 1')
+                        logger.info(f"Single filter detected: {filter_name}, filling template once")
                         
                         # Create a unique name for this filter's copy of the template
                         output_dir = os.path.join(os.path.dirname(template_path), 'filled')
@@ -573,21 +648,18 @@ def match_templates(keywords, template_dir, flow_data=None, filters_data=None, t
                         filter_name_safe = filter_name.replace(' ', '_').replace('/', '_').replace('\\', '_')
                         
                         # Create a unique identifier
-                        timestamp = int(time.time() * 1000) + i
+                        timestamp = int(time.time() * 1000)
                         unique_id = f'{filter_name_safe}_{timestamp}'
                         
-                        # Try to fill the template with this filter's data
+                        # Try to fill the template with the filter's data
                         filled_path = fill_pdf_form_fields(template_path, filter_data, filter_name=unique_id, gutter_data=gutter_data)
                         
                         if filled_path:
                             logger.info(f"Successfully filled template for {filter_name}, path: {filled_path}")
                             filled_templates.append(filled_path)
-                            break  # Only use the first successful fill
-                    
-                    # If no filter worked, add the original template
-                    if len(filled_templates) == 0 or filled_templates[-1] != filled_path:
-                        logger.warning(f"Could not fill template with any filter data, using original")
-                        filled_templates.append(template_path)
+                        else:
+                            logger.warning(f"Could not fill template with filter data, using original")
+                            filled_templates.append(template_path)
                 else:
                     # No filters data available
                     logger.info(f"No filter data available for template {template_name}")
