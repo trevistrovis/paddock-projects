@@ -748,23 +748,49 @@ def extract_worker_from_wd(
     for i, line in enumerate(lines):
         upper_line = line.upper()
 
+        # Check if any search term matches (allowing for parentheticals like "MILLWRIGHT (COUNTIES)")
         if not any(term in upper_line for term in search_terms):
             continue
 
         print(f"[SAM] Found candidate {worker_classification} line: {line}")
 
+        # Combine current line with next line for rate extraction
         combined = line
         if i + 1 < len(lines):
             combined = f"{line} {lines[i + 1]}"
+        
+        # More flexible rate patterns: handle $ signs, commas, different decimal formats
+        rate_patterns = [
+            r"\$\d{1,3}(?:,\d{3})*\.\d{2}",  # $1,234.56 or $45.50
+            r"\d{1,3}(?:,\d{3})*\.\d{2}",     # 1,234.56 or 45.50
+            r"\$\d{1,3}\.\d{2}",               # $45.50
+            r"\d{1,3}\.\d{2}",                 # 45.50
+        ]
+        
+        rates = []
+        for pattern in rate_patterns:
+            found = re.findall(pattern, combined)
+            if found:
+                rates.extend(found)
+                break
+        
+        # Clean rates (remove $, commas)
+        cleaned_rates = []
+        for rate in rates:
+            clean = rate.replace("$", "").replace(",", "")
+            try:
+                cleaned_rates.append(float(clean))
+            except ValueError:
+                continue
 
-        rates = re.findall(r"\d{1,3}\.\d{2}", combined)
+        print(f"[SAM] Extracted rates from line: {cleaned_rates}")
 
-        if len(rates) >= 2:
+        if len(cleaned_rates) >= 2:
             effective_date = _normalize_effective_date(text)
 
             return {
-                "base_rate": float(rates[0]),
-                "fringe_rate": float(rates[1]),
+                "base_rate": cleaned_rates[0],
+                "fringe_rate": cleaned_rates[1],
                 "effective_date": effective_date,
                 "matched_line": combined,
                 "worker_classification": worker_classification,
