@@ -38,6 +38,38 @@
           </div>
         </div>
       </div>
+
+      <!-- Pool Information -->
+      <div class="card mb-3">
+        <div class="card-header d-flex justify-content-between align-items-center">
+          <h5 class="mb-0">Pool Information</h5>
+          <div>
+            <button type="button" class="btn btn-sm btn-outline-secondary me-2" id="togglePoolsBtn" data-bs-toggle="collapse" data-bs-target="#poolsCollapse">
+              <span id="togglePoolsIcon">▼</span> <span id="togglePoolsText">Collapse</span>
+            </button>
+            <button type="button" class="btn btn-sm btn-success" id="addPoolBtn">Add Pool</button>
+          </div>
+        </div>
+        <div class="collapse show" id="poolsCollapse">
+          <div class="card-body">
+            <div id="poolsContainer">
+              <!-- Pool 1 -->
+              <div class="pool-group mb-4" data-pool-index="1">
+                <div class="d-flex justify-content-between align-items-center border-bottom pb-2 mb-3">
+                  <h6 class="mb-0">Pool 1</h6>
+                  <button type="button" class="btn btn-sm btn-danger remove-pool-btn">Remove</button>
+                </div>
+                <div class="mb-3">
+                  <label class="form-label">Pool Name/Location</label>
+                  <input type="text" class="form-control" name="pool_name_1" placeholder="e.g., Main Pool, Spa, etc.">
+                </div>
+              </div>
+            </div>
+            <input type="hidden" name="pool_count" id="poolCount" value="1">
+          </div>
+        </div>
+      </div>
+
             <!-- Gutter Information -->
       <div class="card mb-3">
         <div class="card-header d-flex justify-content-between align-items-center">
@@ -56,58 +88,8 @@
             <div class="gutter-group mb-4" data-gutter-index="1">
               <h6 class="border-bottom pb-2 mb-3">Gutter 1</h6>
               <div class="mb-3">
-                <label class="form-label">Gutter Name/Location</label>
-                <input type="text" class="form-control" name="gutter_name_1" placeholder="e.g., Main Pool, Spa, etc.">
-              </div>
-              <div class="row g-3">
-                <div class="col-sm-6">
-                  <label class="form-label">Gutter Option</label>
-                  <select class="form-select" name="gutter_option_1">
-                    <option value="">-- Select Gutter Option --</option>
-                    <option value="R300">R300</option>
-                    <option value="C100">C100</option>
-                    <option value="M100">M100</option>
-                  </select>
-                </div>
-                <div class="col-sm-6 d-flex align-items-end">
-                  <div class="form-check">
-                    <input class="form-check-input" type="checkbox" name="has_grating_1" id="has_grating_1" value="yes">
-                    <label class="form-check-label" for="has_grating_1">Grating (Yes/No)</label>
-                  </div>
-                </div>
-                <div class="col-12">
-                  <label class="form-label">Features</label>
-                  <div class="d-flex flex-wrap gap-3">
-                    <div class="form-check">
-                      <input class="form-check-input" type="checkbox" name="gutter_features_1" id="gutter1_feature_TG" value="TG">
-                      <label class="form-check-label" for="gutter1_feature_TG">TG (Top Grate)</label>
-                    </div>
-                    <div class="form-check">
-                      <input class="form-check-input" type="checkbox" name="gutter_features_1" id="gutter1_feature_DI" value="DI">
-                      <label class="form-check-label" for="gutter1_feature_DI">DI (Drop In)</label>
-                    </div>
-                    <div class="form-check">
-                      <input class="form-check-input" type="checkbox" name="gutter_features_1" id="gutter1_feature_TGEC" value="TGEC">
-                      <label class="form-check-label" for="gutter1_feature_TGEC">TGEC (Top Grate Extra Chamber)</label>
-                    </div>
-                    <div class="form-check">
-                      <input class="form-check-input" type="checkbox" name="gutter_features_1" id="gutter1_feature_TGDD" value="TGDD">
-                      <label class="form-check-label" for="gutter1_feature_TGDD">TGDD (Top Grate Deck Drain with Evacuator)</label>
-                    </div>
-                  </div>
-                </div>
-                <div class="col-sm-4">
-                  <label class="form-label">Inlet Count</label>
-                  <input type="number" class="form-control" name="inlet_count_1" placeholder="###">
-                </div>
-                <div class="col-sm-4">
-                  <label class="form-label">Inlet Size</label>
-                  <input type="text" class="form-control" name="inlet_size_1" placeholder="#/# X #/#">
-                </div> 
-                <div class="col-sm-4">
-                  <label class="form-label">Drawing Number</label>
-                  <input type="text" class="form-control" name="drawing_number_1" placeholder="#####.##">
-                </div>
+                <label class="form-label">Drawing Number</label>
+                <input type="text" class="form-control" name="drawing_number_1" placeholder="#####.##">
               </div>
             </div>
           </div>
@@ -117,77 +99,16 @@
       <!-- Hidden field to track number of gutters -->
       <input type="hidden" name="gutter_count" id="gutterCount" value="1">
 
-      <!-- Flow Rate Information -->
-      <div class="card mb-3">
-        <div class="card-header d-flex justify-content-between align-items-center">
-          <h5 class="mb-0">Flow Rate Information (Optional)</h5>
-          <div>
-            <button type="button" class="btn btn-sm btn-outline-secondary me-2" id="toggleFiltersBtn" data-bs-toggle="collapse" data-bs-target="#filtersCollapse">
-              <span id="toggleFiltersIcon">▼</span> <span id="toggleFiltersText">Collapse</span>
-            </button>
-            <button type="button" class="btn btn-sm btn-success" id="addFilterBtn">Add Filter</button>
-          </div>
-        </div>
-        <div class="collapse show" id="filtersCollapse">
-          <div class="card-body">
-            <div id="filtersContainer">
-              <!-- Filter 1 -->
-              <div class="filter-group mb-4" data-filter-index="1">
-                <h6 class="border-bottom pb-2 mb-3">Filter 1</h6>
-                <div class="mb-3">
-                  <label class="form-label">Filter Name/Location</label>
-                  <input type="text" class="form-control" name="filter_name_1" placeholder="e.g., Main Pool, Spa, etc.">
-                </div>
-                <div class="mb-3">
-                  <label class="form-label">Primary Flow Rate (GPM)</label>
-                  <input type="number" step="0.1" class="form-control" name="primary_flow_rate_1">
-                </div>
-                <div class="mb-3">
-                  <label class="form-label">Backwash Rate (GPM)</label>
-                  <input type="number" step="0.1" class="form-control" name="backwash_rate_1">
-                </div>
-                <div class="mb-3">
-                  <label class="form-label">Total Dynamic Head (ft)</label>
-                  <input type="number" step="0.1" class="form-control" name="total_dynamic_head_1">
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-      
-      
-      <!-- Hidden field to track number of filters -->
-      <input type="hidden" name="filter_count" id="filterCount" value="1">
-      
-      <!-- Template-Filter Mapping Section -->
-      <div class="card mb-3">
-        <div class="card-header bg-info text-white d-flex justify-content-between align-items-center">
-          <h5 class="mb-0">Template-Filter Mapping</h5>
-          <button type="button" class="btn btn-sm btn-outline-light" id="toggleTemplateBtn" data-bs-toggle="collapse" data-bs-target="#templateCollapse">
-            <span id="toggleTemplateIcon">▼</span> <span id="toggleTemplateText">Collapse</span>
-          </button>
-        </div>
-        <div class="collapse show" id="templateCollapse">
-          <div class="card-body">
-            <p class="text-muted">Select templates from the cache and map each to a filter. Only selected templates are used.</p>
-            <div id="templateBrowser" class="row g-3 mb-3">
-              <div class="col-12"><div class="alert alert-info">Loading templates...</div></div>
-            </div>
-            <!-- Hidden inputs for mappings get injected here -->
-            <div id="main-template-mappings"></div>
-          </div>
-        </div>
-      </div>
       
       <div class="mb-3">
         <label class="form-label">Sales Order PDF</label>
         <input type="file" class="form-control" name="sales_order" accept="application/pdf" required>
       </div>
-      <!-- <div class="mb-3">
-        <label class="form-label">OT Excel File (optional)</label>
-        <input type="file" class="form-control" name="ot_file" accept=".xls,.xlsx">
-      </div> -->
+      <div class="mb-3">
+        <label class="form-label">Equipment List Spreadsheet (optional)</label>
+        <input type="file" class="form-control" name="ot_file" accept=".xls,.xlsx,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet">
+        <small class="form-text text-muted">The first row of each sheet is formatted as table headers and included in Project Documentation.</small>
+      </div>
       <div class="mb-3">
         <label class="form-label">Upload Job Folder</label>
         <input type="file" class="form-control" name="job_folder" webkitdirectory directory multiple>
@@ -213,12 +134,7 @@
         <!-- Folder Tabs -->
         <ul class="nav nav-tabs mb-3" id="fileManagerTabs" role="tablist">
           <li class="nav-item" role="presentation">
-            <button class="nav-link active" id="templates-tab" data-bs-toggle="tab" data-bs-target="#templates-panel" type="button" role="tab">
-              Templates
-            </button>
-          </li>
-          <li class="nav-item" role="presentation">
-            <button class="nav-link" id="maintenance-tab" data-bs-toggle="tab" data-bs-target="#maintenance-panel" type="button" role="tab">
+            <button class="nav-link active" id="maintenance-tab" data-bs-toggle="tab" data-bs-target="#maintenance-panel" type="button" role="tab">
               Maintenance Docs
             </button>
           </li>
@@ -231,36 +147,8 @@
         
         <!-- Tab Content -->
         <div class="tab-content" id="fileManagerTabContent">
-          <!-- Templates Panel -->
-          <div class="tab-pane fade show active" id="templates-panel" role="tabpanel">
-            <div class="mb-3">
-              <label class="form-label">Upload New Template</label>
-              <div class="input-group">
-                <input type="file" class="form-control" id="uploadTemplates" accept="application/pdf">
-                <button class="btn btn-primary" type="button" onclick="uploadFile('templates')">Upload</button>
-              </div>
-              <small class="form-text text-muted">Only PDF files are allowed. File must not already exist.</small>
-            </div>
-            <div id="templatesAlert"></div>
-            <div class="table-responsive">
-              <table class="table table-sm table-striped">
-                <thead>
-                  <tr>
-                    <th>Filename</th>
-                    <th>Size</th>
-                    <th>Modified</th>
-                    <th>Actions</th>
-                  </tr>
-                </thead>
-                <tbody id="templatesFileList">
-                  <tr><td colspan="4" class="text-center text-muted">Loading...</td></tr>
-                </tbody>
-              </table>
-            </div>
-          </div>
-          
           <!-- Maintenance Docs Panel -->
-          <div class="tab-pane fade" id="maintenance-panel" role="tabpanel">
+          <div class="tab-pane fade show active" id="maintenance-panel" role="tabpanel">
             <div class="mb-3">
               <label class="form-label">Upload New Maintenance Document</label>
               <div class="input-group">
@@ -338,54 +226,6 @@
             <label for="phone">Phone Number:</label>
             <input type="text" class="form-control" id="phone" name="phone">
           </div>
-          <div class="form-group">
-            <div class="card">
-              <div class="card-header bg-info text-white">
-                <h5>Template-Filter Mapping</h5>
-              </div>
-              <!-- <div class="card-body">
-                <p class="text-muted">For each template with flow fields, select which filter's data to use:</p>
-                <div id="template-filter-mappings">
-                  <!-- Template-filter mappings will be added here dynamically -->
-                  <div class="alert alert-info">Template mappings will appear after you add filters and upload templates.</div>
-                </div> -->
-              </div>
-            </div>
-          </div>
-          <!-- Flow Rate Information -->
-          <!-- <div class="card mb-3">
-            <div class="card-header d-flex justify-content-between align-items-center">
-              <h5 class="mb-0">Flow Rate Information (Optional)</h5>
-              <button type="button" class="btn btn-sm btn-success" id="addCoverFilterBtn">Add Filter</button>
-            </div>
-            <div class="card-body">
-              <div id="coverFiltersContainer">
-                <!-- Filter 1 -->
-                <!-- <div class="filter-group mb-4" data-filter-index="1">
-                  <h6 class="border-bottom pb-2 mb-3">Filter 1</h6>
-                  <div class="mb-3">
-                    <label class="form-label">Filter Name/Location</label>
-                    <input type="text" class="form-control" name="filter_name_1" placeholder="e.g., Main Pool, Spa, etc.">
-                  </div>
-                  <div class="mb-3">
-                    <label class="form-label">Primary Flow Rate (GPM)</label>
-                    <input type="number" step="0.1" class="form-control" name="primary_flow_rate_1">
-                  </div>
-                  <div class="mb-3">
-                    <label class="form-label">Backwash Rate (GPM)</label>
-                    <input type="number" step="0.1" class="form-control" name="backwash_rate_1">
-                  </div>
-                  <div class="mb-3">
-                    <label class="form-label">Total Dynamic Head (ft)</label>
-                    <input type="number" step="0.1" class="form-control" name="total_dynamic_head_1">
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div> --> -->
-          
-          <!-- Hidden field to track number of filters -->
-          <input type="hidden" name="filter_count" id="coverFilterCount" value="1">
           <button type="submit" class="btn btn-secondary">Regenerate Cover Page</button>
         </form>
       </div>
@@ -394,6 +234,95 @@
   <!-- Add JavaScript for dynamic filter fields -->
   <script>
     document.addEventListener('DOMContentLoaded', function() {
+      // Pool handling helpers (used by filters and gutters)
+      function getCurrentPools() {
+        return Array.from(document.querySelectorAll('#poolsContainer .pool-group')).map(group => {
+          const id = group.dataset.poolIndex;
+          const nameInput = group.querySelector('input[name^="pool_name_"]');
+          const name = (nameInput && nameInput.value.trim()) ? nameInput.value.trim() : `Pool ${id}`;
+          return { id, name };
+        });
+      }
+
+      function getPoolOptions(selectedId) {
+        const pools = getCurrentPools();
+        if (!pools.length) return '<option value="">-- No Pools --</option>';
+        return pools.map(p => `<option value="${p.id}"${p.id === selectedId ? ' selected' : ''}>${p.name}</option>`).join('');
+      }
+
+      function updateAllPoolSelects() {
+        const pools = getCurrentPools();
+        document.querySelectorAll('.pool-select').forEach(sel => {
+          const current = sel.value;
+          sel.innerHTML = '<option value="">-- Select Pool --</option>' + pools.map(p => `<option value="${p.id}">${p.name}</option>`).join('');
+          if ([...sel.options].some(o => o.value === current)) sel.value = current;
+          if (!sel.value && pools.length) sel.value = pools[0].id;
+        });
+      }
+
+      function updatePoolIndices() {
+        const poolGroups = document.querySelectorAll('#poolsContainer .pool-group');
+        document.getElementById('poolCount').value = poolGroups.length;
+        poolGroups.forEach((group, index) => {
+          const newIndex = index + 1;
+          group.dataset.poolIndex = newIndex;
+          const heading = group.querySelector('h6');
+          if (heading) heading.textContent = `Pool ${newIndex}`;
+          const input = group.querySelector('input[name^="pool_name_"]');
+          if (input) input.name = `pool_name_${newIndex}`;
+        });
+        updateAllPoolSelects();
+        if (typeof refreshFilterOptionsOnCards === 'function') refreshFilterOptionsOnCards();
+      }
+
+      // Pool handling
+      const addPoolBtn = document.getElementById('addPoolBtn');
+      const poolsContainer = document.getElementById('poolsContainer');
+      const poolCountInput = document.getElementById('poolCount');
+
+      addPoolBtn.addEventListener('click', function() {
+        const currentCount = parseInt(poolCountInput.value);
+        const newCount = currentCount + 1;
+        const newPoolGroup = document.createElement('div');
+        newPoolGroup.className = 'pool-group mb-4';
+        newPoolGroup.dataset.poolIndex = newCount;
+        newPoolGroup.innerHTML = `
+          <div class="d-flex justify-content-between align-items-center border-bottom pb-2 mb-3">
+            <h6 class="mb-0">Pool ${newCount}</h6>
+            <button type="button" class="btn btn-sm btn-danger remove-pool-btn">Remove</button>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Pool Name/Location</label>
+            <input type="text" class="form-control" name="pool_name_${newCount}" placeholder="e.g., Main Pool, Spa, etc.">
+          </div>
+        `;
+        poolsContainer.appendChild(newPoolGroup);
+        newPoolGroup.querySelector('.remove-pool-btn').addEventListener('click', function() {
+          poolsContainer.removeChild(newPoolGroup);
+          updatePoolIndices();
+        });
+        poolCountInput.value = newCount;
+        updateAllPoolSelects();
+      });
+
+      // Remove button for the default pool group
+      const defaultPoolRemove = poolsContainer.querySelector('.remove-pool-btn');
+      if (defaultPoolRemove) {
+        defaultPoolRemove.addEventListener('click', function() {
+          const group = this.closest('.pool-group');
+          if (group) poolsContainer.removeChild(group);
+          updatePoolIndices();
+        });
+      }
+
+      // Update pool options in filter/gutter selects when pool names change
+      poolsContainer.addEventListener('input', function(e) {
+        if (e.target && e.target.name && e.target.name.startsWith('pool_name_')) {
+          updateAllPoolSelects();
+          refreshFilterOptionsOnCards();
+        }
+      });
+
       // Gutter handling
       const addGutterBtn = document.getElementById('addGutterBtn');
       const guttersContainer = document.getElementById('guttersContainer');
@@ -415,58 +344,8 @@
             <button type="button" class="btn btn-sm btn-danger remove-gutter-btn">Remove</button>
           </div>
           <div class="mb-3">
-            <label class="form-label">Gutter Name/Location</label>
-            <input type="text" class="form-control" name="gutter_name_${newCount}" placeholder="e.g., Main Pool, Spa, etc.">
-          </div>
-          <div class="row g-3">
-            <div class="col-sm-6">
-              <label class="form-label">Gutter Option</label>
-              <select class="form-select" name="gutter_option_${newCount}">
-                <option value="">-- Select Gutter Option --</option>
-                <option value="R300">R300</option>
-                <option value="C100">C100</option>
-                <option value="M100">M100</option>
-              </select>
-            </div>
-            <div class="col-sm-6 d-flex align-items-end">
-              <div class="form-check">
-                <input class="form-check-input" type="checkbox" name="has_grating_${newCount}" id="has_grating_${newCount}" value="yes">
-                <label class="form-check-label" for="has_grating_${newCount}">Grating (Yes/No)</label>
-              </div>
-            </div>
-            <div class="col-12">
-              <label class="form-label">Features</label>
-              <div class="d-flex flex-wrap gap-3">
-                <div class="form-check">
-                  <input class="form-check-input" type="checkbox" name="gutter_features_${newCount}" id="gutter${newCount}_feature_TG" value="TG">
-                  <label class="form-check-label" for="gutter${newCount}_feature_TG">TG (Top Grate)</label>
-                </div>
-                <div class="form-check">
-                  <input class="form-check-input" type="checkbox" name="gutter_features_${newCount}" id="gutter${newCount}_feature_DI" value="DI">
-                  <label class="form-check-label" for="gutter${newCount}_feature_DI">DI (Drop In)</label>
-                </div>
-                <div class="form-check">
-                  <input class="form-check-input" type="checkbox" name="gutter_features_${newCount}" id="gutter${newCount}_feature_TGEC" value="TGEC">
-                  <label class="form-check-label" for="gutter${newCount}_feature_TGEC">TGEC (Top Grate Extra Chamber)</label>
-                </div>
-                <div class="form-check">
-                  <input class="form-check-input" type="checkbox" name="gutter_features_${newCount}" id="gutter${newCount}_feature_TGDD" value="TGDD">
-                  <label class="form-check-label" for="gutter${newCount}_feature_TGDD">TGDD (Top Grate Deck Drain with Evacuator)</label>
-                </div>
-              </div>
-            </div>
-            <div class="col-sm-4">
-              <label class="form-label">Inlet Count</label>
-              <input type="number" class="form-control" name="inlet_count_${newCount}" placeholder="###">
-            </div>
-            <div class="col-sm-4">
-              <label class="form-label">Inlet Size</label>
-              <input type="text" class="form-control" name="inlet_size_${newCount}" placeholder="#/# X #/#">
-            </div> 
-            <div class="col-sm-4">
-              <label class="form-label">Drawing Number</label>
-              <input type="text" class="form-control" name="drawing_number_${newCount}" placeholder="#####.##">
-            </div>
+            <label class="form-label">Drawing Number</label>
+            <input type="text" class="form-control" name="drawing_number_${newCount}" placeholder="#####.##">
           </div>
         `;
         
@@ -551,22 +430,6 @@
         }
       });
       
-      // Template collapse/expand toggle
-      const toggleTemplateBtn = document.getElementById('toggleTemplateBtn');
-      const templateCollapse = document.getElementById('templateCollapse');
-      const toggleTemplateIcon = document.getElementById('toggleTemplateIcon');
-      const toggleTemplateText = document.getElementById('toggleTemplateText');
-      
-      toggleTemplateBtn.addEventListener('click', function() {
-        if (templateCollapse.classList.contains('show')) {
-          toggleTemplateIcon.textContent = '▶';
-          toggleTemplateText.textContent = 'Expand';
-        } else {
-          toggleTemplateIcon.textContent = '▼';
-          toggleTemplateText.textContent = 'Collapse';
-        }
-      });
-      
       // File Management collapse/expand toggle
       const toggleFileManagementBtn = document.getElementById('toggleFileManagementBtn');
       const fileManagementCollapse = document.getElementById('fileManagementCollapse');
@@ -583,277 +446,6 @@
         }
       });
       
-      // Filter collapse/expand toggle
-      const toggleFiltersBtn = document.getElementById('toggleFiltersBtn');
-      const filtersCollapse = document.getElementById('filtersCollapse');
-      const toggleFiltersIcon = document.getElementById('toggleFiltersIcon');
-      const toggleFiltersText = document.getElementById('toggleFiltersText');
-      
-      toggleFiltersBtn.addEventListener('click', function() {
-        if (filtersCollapse.classList.contains('show')) {
-          toggleFiltersIcon.textContent = '▶';
-          toggleFiltersText.textContent = 'Expand';
-        } else {
-          toggleFiltersIcon.textContent = '▼';
-          toggleFiltersText.textContent = 'Collapse';
-        }
-      });
-      
-      // Main form filter handling
-      const addFilterBtn = document.getElementById('addFilterBtn');
-      const filtersContainer = document.getElementById('filtersContainer');
-      const filterCountInput = document.getElementById('filterCount');
-      
-      addFilterBtn.addEventListener('click', function() {
-        const currentCount = parseInt(filterCountInput.value);
-        const newCount = currentCount + 1;
-        
-        // Create new filter group
-        const newFilterGroup = document.createElement('div');
-        newFilterGroup.className = 'filter-group mb-4';
-        newFilterGroup.dataset.filterIndex = newCount;
-        
-        // Add filter content
-        newFilterGroup.innerHTML = `
-          <div class="d-flex justify-content-between align-items-center border-bottom pb-2 mb-3">
-            <h6 class="mb-0">Filter ${newCount}</h6>
-            <button type="button" class="btn btn-sm btn-danger remove-filter-btn">Remove</button>
-          </div>
-          <div class="mb-3">
-            <label class="form-label">Filter Name/Location</label>
-            <input type="text" class="form-control" name="filter_name_${newCount}" placeholder="e.g., Main Pool, Spa, etc.">
-          </div>
-          <div class="mb-3">
-            <label class="form-label">Primary Flow Rate (GPM)</label>
-            <input type="number" step="0.1" class="form-control" name="primary_flow_rate_${newCount}">
-          </div>
-          <div class="mb-3">
-            <label class="form-label">Backwash Rate (GPM)</label>
-            <input type="number" step="0.1" class="form-control" name="backwash_rate_${newCount}">
-          </div>
-          <div class="mb-3">
-            <label class="form-label">Total Dynamic Head (ft)</label>
-            <input type="number" step="0.1" class="form-control" name="total_dynamic_head_${newCount}">
-          </div>
-        `;
-        
-        filtersContainer.appendChild(newFilterGroup);
-        
-        // Update count
-        filterCountInput.value = newCount;
-        
-        // Add event listener to the new remove button
-        newFilterGroup.querySelector('.remove-filter-btn').addEventListener('click', function() {
-          filtersContainer.removeChild(newFilterGroup);
-          updateFilterIndices('filtersContainer', 'filterCount');
-        });
-      });
-      
-      // Cover page form filter handling
-      const addCoverFilterBtn = document.getElementById('addCoverFilterBtn');
-      const coverFiltersContainer = document.getElementById('coverFiltersContainer');
-      const coverFilterCountInput = document.getElementById('coverFilterCount');
-      
-      if (addCoverFilterBtn) {
-        addCoverFilterBtn.addEventListener('click', function() {
-          const currentCount = parseInt(coverFilterCountInput.value);
-          const newCount = currentCount + 1;
-          
-          // Create new filter group
-          const newFilterGroup = document.createElement('div');
-          newFilterGroup.className = 'filter-group mb-4';
-          newFilterGroup.dataset.filterIndex = newCount;
-          
-          // Add filter content
-          newFilterGroup.innerHTML = `
-            <div class="d-flex justify-content-between align-items-center border-bottom pb-2 mb-3">
-              <h6 class="mb-0">Filter ${newCount}</h6>
-              <button type="button" class="btn btn-sm btn-danger remove-filter-btn">Remove</button>
-            </div>
-            <div class="mb-3">
-              <label class="form-label">Filter Name/Location</label>
-              <input type="text" class="form-control" name="filter_name_${newCount}" placeholder="e.g., Main Pool, Spa, etc.">
-            </div>
-            <div class="mb-3">
-              <label class="form-label">Primary Flow Rate (GPM)</label>
-              <input type="number" step="0.1" class="form-control" name="primary_flow_rate_${newCount}">
-            </div>
-            <div class="mb-3">
-              <label class="form-label">Backwash Rate (GPM)</label>
-              <input type="number" step="0.1" class="form-control" name="backwash_rate_${newCount}">
-            </div>
-            <div class="mb-3">
-              <label class="form-label">Total Dynamic Head (ft)</label>
-              <input type="number" step="0.1" class="form-control" name="total_dynamic_head_${newCount}">
-            </div>
-          `;
-          
-          coverFiltersContainer.appendChild(newFilterGroup);
-          
-          // Update count
-          coverFilterCountInput.value = newCount;
-        });
-      }
-      
-      // Function to update filter indices
-      function updateFilterIndices(containerId, countInputId) {
-        const container = document.getElementById(containerId);
-        const filterGroups = container.querySelectorAll('.filter-group');
-        const countInput = document.getElementById(countInputId);
-        
-        // Update count
-        countInput.value = filterGroups.length;
-        
-        // Update indices
-        filterGroups.forEach((group, index) => {
-          const newIndex = index + 1;
-          group.dataset.filterIndex = newIndex;
-          
-          // Update heading
-          const heading = group.querySelector('h6');
-          if (heading) {
-            heading.textContent = `Filter ${newIndex}`;
-          }
-          
-          // Update input names
-          const inputs = group.querySelectorAll('input[name]');
-          inputs.forEach(input => {
-            const baseName = input.name.split('_').slice(0, -1).join('_');
-            input.name = `${baseName}_${newIndex}`;
-          });
-        });
-      }
-    });
-  </script>
-  
-  <!-- Template-Filter Mapping Script -->
-  <script>
-    document.addEventListener('DOMContentLoaded', function() {
-      // Build hidden mapping inputs from selected cards (clean implementation)
-      function updateTemplateMappings() {
-        const mappingsContainer = document.getElementById('main-template-mappings');
-        if (!mappingsContainer) return;
-        const cards = document.querySelectorAll('#templateBrowser .card');
-        let index = 0;
-        let html = '';
-        cards.forEach(card => {
-          const cb = card.querySelector('.tpl-select');
-          const sel = card.querySelector('.tpl-filter');
-          const name = cb ? cb.getAttribute('data-name') : null;
-          if (cb && cb.checked && sel && sel.value && name) {
-            html += `<input type="hidden" name="template_name_${index}" value="${name}">`;
-            html += `<input type="hidden" name="template_filter_map_${index}" value="${sel.value}">`;
-            index++;
-          }
-        });
-        if (index > 0) {
-          html += `<input type="hidden" name="template_count" value="${index}">`;
-          mappingsContainer.innerHTML = html;
-        } else {
-          mappingsContainer.innerHTML = '<div class="alert alert-info">Select templates from above to map them to filters.</div>';
-        }
-      }
-      
-      // Visual Template Browser (fetch from /api/templates)
-      const templateBrowser = document.getElementById('templateBrowser');
-      async function fetchTemplates() {
-        try {
-          templateBrowser.innerHTML = '<div class="col-12"><div class="alert alert-info">Loading templates...</div></div>';
-          const res = await fetch('/api/templates');
-          const data = await res.json();
-          const list = (data && data.templates) ? data.templates : [];
-          if (!list.length) {
-            templateBrowser.innerHTML = '<div class="col-12"><div class="alert alert-warning">No templates found in template_cache.</div></div>';
-            return;
-          }
-          let html = '';
-          list.forEach((t, idx) => {
-            const cardId = `tpl_${idx}`;
-            html += `
-              <div class="col-12 col-sm-6 col-md-4 col-lg-3">
-                <div class="card h-100">
-                  <img src="${t.thumbnail}" class="card-img-top" alt="thumbnail for ${t.name}" onerror="this.style.display='none'">
-                  <div class="card-body d-flex flex-column">
-                    <h6 class="card-title" title="${t.name}">${t.name}</h6>
-                    <div class="form-check mb-2">
-                      <input class="form-check-input tpl-select" type="checkbox" id="${cardId}" data-name="${t.name}">
-                      <label class="form-check-label" for="${cardId}">Use this template</label>
-                    </div>
-                    <select class="form-select form-select-sm tpl-filter" disabled>
-                      <option value="">-- Select Filter --</option>
-                    </select>
-                  </div>
-                </div>
-              </div>`;
-          });
-          templateBrowser.innerHTML = html;
-          refreshFilterOptionsOnCards();
-          wireCardEvents();
-        } catch (e) {
-          templateBrowser.innerHTML = `<div class="col-12"><div class="alert alert-danger">Error loading templates: ${e}</div></div>`;
-        }
-      }
-      fetchTemplates();
-      
-      function getCurrentFilters() {
-        return Array.from(document.querySelectorAll('#filtersContainer .filter-group')).map(group => {
-          const id = group.dataset.filterIndex;
-          const nameInput = group.querySelector('input[name^="filter_name_"]');
-          const name = (nameInput && nameInput.value) ? nameInput.value : `Filter ${id}`;
-          return { id, name };
-        });
-      }
-      
-      function refreshFilterOptionsOnCards() {
-        const filters = getCurrentFilters();
-        const selects = document.querySelectorAll('.tpl-filter');
-        selects.forEach(sel => {
-          const current = sel.value;
-          sel.innerHTML = '<option value="">-- Select Filter --</option>' +
-            filters.map(f => `<option value="${f.id}">${f.name}</option>`).join('');
-          if ([...sel.options].some(o => o.value === current)) sel.value = current;
-        });
-      }
-      
-      function wireCardEvents() {
-        templateBrowser.addEventListener('change', function(e) {
-          const card = e.target.closest('.card');
-          if (!card) return;
-          const checkbox = card.querySelector('.tpl-select');
-          const select = card.querySelector('.tpl-filter');
-          if (e.target.classList.contains('tpl-select')) {
-            select.disabled = !checkbox.checked;
-            if (!checkbox.checked) select.value = '';
-            updateTemplateMappings();
-          } else if (e.target.classList.contains('tpl-filter')) {
-            updateTemplateMappings();
-          }
-        });
-      }
-      
-      // Update mappings when filters are added or removed
-      const addFilterBtn = document.getElementById('addFilterBtn');
-      if (addFilterBtn) {
-        addFilterBtn.addEventListener('click', function() {
-          setTimeout(updateTemplateMappings, 100);
-          setTimeout(refreshFilterOptionsOnCards, 150);
-        });
-      }
-      
-      // Add event delegation for filter removal
-      const filtersContainer = document.getElementById('filtersContainer');
-      if (filtersContainer) {
-        filtersContainer.addEventListener('click', function(e) {
-          if (e.target.classList.contains('remove-filter-btn')) {
-            setTimeout(updateTemplateMappings, 100);
-            setTimeout(refreshFilterOptionsOnCards, 150);
-          }
-        });
-      }
-      
-      // Demo template injection removed for production to ensure mappings only reflect actual uploaded files.
-
-      // No template preparation UI in manual-field mode.
     });
   </script>
   
@@ -996,12 +588,10 @@
     
     // Load file lists when the page loads
     document.addEventListener('DOMContentLoaded', function() {
-      loadFileList('templates');
       loadFileList('maintenance');
       loadFileList('warranty');
       
       // Add event listeners for tab changes to refresh lists
-      document.getElementById('templates-tab').addEventListener('shown.bs.tab', () => loadFileList('templates'));
       document.getElementById('maintenance-tab').addEventListener('shown.bs.tab', () => loadFileList('maintenance'));
       document.getElementById('warranty-tab').addEventListener('shown.bs.tab', () => loadFileList('warranty'));
     });

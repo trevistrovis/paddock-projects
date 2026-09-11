@@ -8,17 +8,15 @@ from io import BytesIO
 from utils.pdf_utils import (
     generate_cover_page,
     extract_items_from_sales_order,
-    extract_pools_from_sales_order,
-    sort_files_by_keyword_order,
     match_templates,
     merge_pdfs,
     find_warranty_documents,
     fill_gutter_maintenance_doc,
-    parse_cover_sheets,
 )
-from utils.excel_utils import create_equipment_list_pdf, extract_job_metadata
+from utils.excel_utils import extract_job_metadata
 from werkzeug.utils import secure_filename
 import logging
+import fitz  # PyMuPDF for thumbnails
 
 # Configure logging
 logging.basicConfig(level=logging.INFO,
@@ -32,9 +30,8 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 UPLOAD_FOLDER = os.path.join(BASE_DIR, 'uploads')
 TEMPLATE_FOLDER = os.path.join(BASE_DIR, 'template_cache')
 MAINTENANCE_DOCS = os.path.join(BASE_DIR, 'maintenance_docs')
-COVER_SHEETS = os.path.join(BASE_DIR, 'cover_sheets')
+INSTALLATION_MANUALS = os.path.join(BASE_DIR, 'maintenance_docs', 'installation_manuals')
 WARRANTY_DOCS = os.path.join(BASE_DIR, 'warranty_docs')
-ALWAYS_INCLUDE = os.path.join(BASE_DIR, 'always_include')
 OUTPUT_FOLDER = os.path.join(BASE_DIR, 'output')
 WORKSPACES_DIR = os.path.join(BASE_DIR, 'workspaces')
 
@@ -42,9 +39,8 @@ WORKSPACES_DIR = os.path.join(BASE_DIR, 'workspaces')
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 os.makedirs(TEMPLATE_FOLDER, exist_ok=True)
 os.makedirs(MAINTENANCE_DOCS, exist_ok=True)
-os.makedirs(COVER_SHEETS, exist_ok=True)
+os.makedirs(INSTALLATION_MANUALS, exist_ok=True)
 os.makedirs(WARRANTY_DOCS, exist_ok=True)
-os.makedirs(ALWAYS_INCLUDE, exist_ok=True)
 os.makedirs(OUTPUT_FOLDER, exist_ok=True)
 os.makedirs(WORKSPACES_DIR, exist_ok=True)
 # Clean up stale workspaces from previous runs
@@ -55,10 +51,11 @@ for _stale in os.listdir(WORKSPACES_DIR):
             shutil.rmtree(_stale_path)
         except Exception:
             pass
+THUMBNAIL_FOLDER = os.path.join(TEMPLATE_FOLDER, '.thumbnails')
+os.makedirs(THUMBNAIL_FOLDER, exist_ok=True)
 
 logger.info(f"Template folder: {TEMPLATE_FOLDER}")
 logger.info(f"Maintenance docs folder: {MAINTENANCE_DOCS}")
-logger.info(f"Cover sheets folder: {COVER_SHEETS}")
 
 def clear_upload_folder():
     """
@@ -105,50 +102,46 @@ def index():
         job_name = request.form['job_name']
         phone = request.form['phone']
 
-        # Collect pool information (at least one default pool must exist)
-        pool_count = int(request.form.get('pool_count', '1'))
-        pools_data = []
-        for i in range(1, pool_count + 1):
-            pool_name = request.form.get(f'pool_name_{i}', f'Pool {i}').strip()
-            if pool_name:
-                pools_data.append({'pool_id': str(i), 'pool_name': pool_name})
-        if not pools_data:
-            pools_data.append({'pool_id': '1', 'pool_name': 'Default'})
-        pool_id_set = {p['pool_id'] for p in pools_data}
-        default_pool_id = pools_data[0]['pool_id']
-        logger.info(f"Pools: {pools_data}")
-
-        # NOTE: Filter flow-rate data collection is disabled. Filter templates are now
-        # boilerplate documents and are no longer auto-filled. Keeping the original code
-        # intact (commented) in case management reverts this decision.
-        #
-        # # Get flow rate information from multiple filters
-        # filter_count = int(request.form.get('filter_count', '1'))
-        #
-        # # Create a list to store flow data for each filter
-        # filters_data = []
-        #
-        # for i in range(1, filter_count + 1):
-        #     pool_id = request.form.get(f'filter_pool_{i}', default_pool_id).strip()
-        #     if pool_id not in pool_id_set:
-        #         pool_id = default_pool_id
-        #     filter_data = {
-        #         'filter_name': request.form.get(f'filter_name_{i}', f'Filter {i}'),
-        #         'pool_id': pool_id,
-        #         'primary_flow_rate': request.form.get(f'primary_flow_rate_{i}', ''),
-        #         'backwash_rate': request.form.get(f'backwash_rate_{i}', ''),
-        #         'total_dynamic_head': request.form.get(f'total_dynamic_head_{i}', ''),
-        #         'filter_id': str(i)  # Store the filter ID for mapping
-        #     }
-        #     # Only add filters that have at least one value filled
-        #     if any(value for key, value in filter_data.items() if key not in ['filter_name', 'filter_id', 'pool_id']):
-        #         filters_data.append(filter_data)
-        #         logger.info(f"Added flow data for {filter_data['filter_name']} (pool {pool_id})")
-        #
-        # Filter flow-rate fill-out and template mapping are disabled.
-        # Templates are matched automatically by keyword.
-        filters_data = None
-        flow_data = None
+        # Get flow rate information from multiple filters
+        filter_count = int(request.form.get('filter_count', '1'))
+        
+        # Create a list to store flow data for each filter
+        filters_data = []
+        
+        for i in range(1, filter_count + 1):
+            filter_data = {
+                'filter_name': request.form.get(f'filter_name_{i}', f'Filter {i}'),
+                'primary_flow_rate': request.form.get(f'primary_flow_rate_{i}', ''),
+                'backwash_rate': request.form.get(f'backwash_rate_{i}', ''),
+                'total_dynamic_head': request.form.get(f'total_dynamic_head_{i}', ''),
+                'filter_id': str(i)  # Store the filter ID for mapping
+            }
+            # Only add filters that have at least one value filled
+            if any(value for key, value in filter_data.items() if key not in ['filter_name', 'filter_id']):
+                filters_data.append(filter_data)
+                logger.info(f"Added flow data for {filter_data['filter_name']}")
+        
+        # Process template-filter mappings
+        template_mappings = {}
+        template_count = int(request.form.get('template_count', '0'))
+        
+        for i in range(template_count):
+            template_name = request.form.get(f'template_name_{i}', '')
+            filter_id = request.form.get(f'template_filter_map_{i}', '')
+            
+            if template_name and filter_id:
+                template_mappings[template_name] = filter_id
+                logger.info(f"Mapped template '{template_name}' to filter ID {filter_id}")
+        
+        logger.info(f"Template mappings: {template_mappings}")
+        
+        # For backward compatibility, use the first filter's data as the main flow_data
+        flow_data = filters_data[0] if filters_data else {
+            'filter_name': 'Filter 1',
+            'primary_flow_rate': '',
+            'backwash_rate': '',
+            'total_dynamic_head': '',
+        }
 
         # Collect gutter information for multiple gutters (optional)
         gutter_count = int(request.form.get('gutter_count', '1'))
@@ -157,16 +150,29 @@ def index():
         gutters_data = []
         
         for i in range(1, gutter_count + 1):
-            drawing_number = request.form.get(f'drawing_number_{i}', '').strip()
+            gutter_features = request.form.getlist(f'gutter_features_{i}') or []
+            raw_has_grating = request.form.get(f'has_grating_{i}')
+            # Only record a value when the checkbox is actually checked; otherwise treat as blank
+            has_grating = 'Yes' if raw_has_grating == 'yes' else ''
+            raw_grating_others = request.form.get(f'grating_others_{i}')
+            grating_others = 'Grating Provided By Others' if raw_grating_others == 'yes' else ''
+            
             gutter_data = {
-                'gutter_name': f'Gutter {i}',
-                'pool_id': default_pool_id,
-                'drawing_number': drawing_number,
-                'gutter_id': str(i)
+                'gutter_name': request.form.get(f'gutter_name_{i}', f'Gutter {i}'),
+                'inlet_count': request.form.get(f'inlet_count_{i}', ''),
+                'inlet_size': request.form.get(f'inlet_size_{i}', ''),
+                'drawing_number': request.form.get(f'drawing_number_{i}', ''),
+                'gutter_option': request.form.get(f'gutter_option_{i}', ''),
+                'has_grating': has_grating,
+                'grating_others': grating_others,
+                'gutter_features': gutter_features,
+                'gutter_features_text': ", ".join(gutter_features) if gutter_features else '',
+                'gutter_id': str(i)  # Store the gutter ID for mapping
             }
-            if drawing_number:
+            # Only add gutters that have at least one value filled
+            if any(value for key, value in gutter_data.items() if key not in ['gutter_name', 'gutter_id']):
                 gutters_data.append(gutter_data)
-                logger.info(f"Added drawing number for {gutter_data['gutter_name']}")
+                logger.info(f"Added gutter data for {gutter_data['gutter_name']}")
         
         # For backward compatibility, use the first gutter's data as the main gutter_data if any exist
         gutter_data = gutters_data[0] if gutters_data else None
@@ -185,25 +191,9 @@ def index():
         so_path = os.path.join(req_upload_dir, secure_filename(sales_order.filename))
         sales_order.save(so_path)
 
-        equipment_list_pdf = None
-        if ot_file and ot_file.filename:
-            spreadsheet_name = secure_filename(ot_file.filename)
-            if not spreadsheet_name.lower().endswith(('.xls', '.xlsx')):
-                _cleanup_workspace(workspace)
-                return "Equipment list must be an Excel file (.xls or .xlsx).", 400
-            ot_path = os.path.join(req_upload_dir, spreadsheet_name)
+        if ot_file:
+            ot_path = os.path.join(req_upload_dir, secure_filename(ot_file.filename))
             ot_file.save(ot_path)
-            try:
-                equipment_list_pdf = create_equipment_list_pdf(
-                    ot_path,
-                    os.path.join(req_output_dir, "equipment_list.pdf"),
-                    title=f"Equipment List - {job_name}",
-                )
-                logger.info(f"Created equipment list PDF: {equipment_list_pdf}")
-            except Exception as e:
-                logger.error(f"Error creating equipment list PDF: {e}")
-                _cleanup_workspace(workspace)
-                return f"Error converting equipment list spreadsheet: {e}", 400
         else:
             ot_path = None
 
@@ -228,140 +218,79 @@ def index():
             else:
                 logger.warning(f"Skipping non-PDF file in job folder: {f.filename}")
 
-        # Extract items from sales order, detecting pool separators if present.
-        logger.info("Extracting keywords and pools from sales order...")
-        parsed_pools_data, pool_keywords_map = extract_pools_from_sales_order(so_path)
-        use_parsed_pools = bool(
-            parsed_pools_data and
-            (len(parsed_pools_data) > 1 or parsed_pools_data[0]['pool_name'].lower() != 'default')
-        )
-        if use_parsed_pools:
-            pools_data = parsed_pools_data
-            default_pool_id = pools_data[0]['pool_id']
-            logger.info(f"Detected {len(pools_data)} pools from sales order: {[p['pool_name'] for p in pools_data]}")
-        else:
-            logger.info("No pool separators detected in sales order; using form pools")
-
+        # Extract items from sales order
+        logger.info("Extracting keywords from sales order...")
+        item_keywords = extract_items_from_sales_order(so_path)
+        logger.info(f"Keywords from sales order: {item_keywords}")
+        
         # Also look for keywords in the uploaded job folder PDFs
         logger.info("Processing job folder PDFs for additional keywords...")
-        additional_keywords = []
         for pdf_path in job_folder_paths:
             try:
-                kws = extract_items_from_sales_order(pdf_path)
-                logger.info(f"Keywords from {os.path.basename(pdf_path)}: {kws}")
-                additional_keywords.extend(kws)
+                additional_keywords = extract_items_from_sales_order(pdf_path)
+                logger.info(f"Keywords from {os.path.basename(pdf_path)}: {additional_keywords}")
+                item_keywords.extend(additional_keywords)
             except Exception as e:
                 logger.error(f"Error processing {pdf_path}: {str(e)}")
-
-        # Build per-pool and global keyword lists
-        if use_parsed_pools:
-            item_keywords = []
-            for pid, kws in pool_keywords_map.items():
-                kws = list(set(kws + additional_keywords))
-                pool_keywords_map[pid] = kws
-                item_keywords.extend(kws)
-            item_keywords = list(set(item_keywords))
-        else:
-            item_keywords = extract_items_from_sales_order(so_path)
-            item_keywords = list(set(item_keywords + additional_keywords))
+        
+        # Remove duplicates and normalize keywords
+        item_keywords = list(set(item_keywords))
         logger.info(f"Final deduplicated keywords: {item_keywords}")
 
-        # Sort the uploaded cutsheets/drawings to follow the order they appear
-        # in the sales order based on filename matching.
-        job_folder_paths = sort_files_by_keyword_order(job_folder_paths, item_keywords)
-        logger.info(f"Reordered job folder files by sales-order keyword order: {[os.path.basename(p) for p in job_folder_paths]}")
-
-        # Match templates and maintenance docs (per pool if pools were parsed)
+        # Match templates and maintenance docs
         logger.info(f"Looking for templates and maintenance docs in {TEMPLATE_FOLDER}")
         logger.info(f"Maintenance docs directory: {os.path.join(TEMPLATE_FOLDER, 'maintenance_docs')}")
         logger.info(f"Maintenance docs exist: {os.path.exists(os.path.join(TEMPLATE_FOLDER, 'maintenance_docs'))}")
-
-        pool_templates = {p['pool_id']: [] for p in pools_data}
-        pool_maintenance = {p['pool_id']: [] for p in pools_data}
-        if use_parsed_pools:
-            maintenance_docs = []
-            for pool in pools_data:
-                pid = pool['pool_id']
-                kws = pool_keywords_map.get(pid, [])
-                templates, maint = match_templates(
-                    kws,
-                    TEMPLATE_FOLDER,
-                    gutter_data=gutter_data,
-                    output_dir=req_output_dir
-                )
-                pool_templates[pid] = templates
-                pool_maintenance[pid] = maint
-                maintenance_docs.extend(maint)
-                logger.info(f"Pool '{pool['pool_name']}' matched {len(templates)} templates, {len(maint)} maintenance docs")
-            templates = [t for ts in pool_templates.values() for t in ts]
-            maintenance_docs = list(set(maintenance_docs))
-        else:
-            templates, maintenance_docs = match_templates(
-                item_keywords,
-                TEMPLATE_FOLDER,
-                gutter_data=gutter_data,
-                output_dir=req_output_dir
-            )
-            pool_templates.setdefault(default_pool_id, []).extend(templates)
+        logger.info(f"Processing with {len(filters_data) if filters_data else 0} filters")
+        
+        use_only_selected = template_count > 0
+        templates, maintenance_docs = match_templates(
+            item_keywords,
+            TEMPLATE_FOLDER,
+            flow_data=flow_data,
+            filters_data=filters_data,
+            template_mappings=template_mappings,
+            gutter_data=gutter_data,
+            use_only_selected=use_only_selected,
+            output_dir=req_output_dir
+        )
         logger.info(f"Matched templates: {[os.path.basename(t) for t in templates]}")
         logger.info(f"Total templates returned: {len(templates)}")
         logger.info(f"Matched maintenance docs: {[os.path.basename(d) for d in maintenance_docs]}")
 
-        # If any gutter data provided, fill gutter_care.pdf and the Perimeter Overflow
-        # & Recirculation gutter doc for each gutter, grouping by pool.
-        pool_gutter_care = {p['pool_id']: [] for p in pools_data}
+        # If any gutter data provided, ensure gutter_care.pdf is filled for each gutter
         if gutters_data:
             try:
-                # 1) Legacy gutter_care.pdf if still present
                 gutter_care_path = os.path.join(MAINTENANCE_DOCS, 'gutter_care.pdf')
                 if os.path.exists(gutter_care_path):
                     # Remove any existing gutter_care.pdf references from maintenance_docs
                     maintenance_docs = [p for p in maintenance_docs if 'gutter_care.pdf' not in os.path.basename(p).lower()]
-
+                    
+                    # Fill gutter_care.pdf for each gutter
+                    gutter_care_docs = []
                     for gutter in gutters_data:
-                        if gutter.get('drawing_number'):
+                        if any(gutter.get(k) for k in [
+                            'inlet_count',
+                            'inlet_size',
+                            'drawing_number',
+                            'gutter_option',
+                            'has_grating',
+                            'gutter_features_text',
+                        ]):
                             # Create a safe name for the output file
                             gutter_name_safe = gutter.get('gutter_name', f'Gutter_{gutter.get("gutter_id", 0)}')
                             gutter_name_safe = gutter_name_safe.replace(' ', '_').replace('/', '_').replace('\\', '_')
-
+                            
                             filled_gutter_care = fill_gutter_maintenance_doc(gutter_care_path, gutter, gutter_name=gutter_name_safe, output_dir=req_output_dir)
-                            if filled_gutter_care:
-                                pool_id = gutter.get('pool_id', default_pool_id)
-                                if pool_id not in pool_gutter_care:
-                                    pool_id = default_pool_id
-                                pool_gutter_care[pool_id].append(filled_gutter_care)
-                                logger.info(f"Processed gutter_care.pdf for {gutter['gutter_name']} (pool {pool_id})")
+                            gutter_care_docs.append(filled_gutter_care)
+                            logger.info(f"Processed gutter_care.pdf for {gutter['gutter_name']}")
+                    
+                    # Add all gutter care docs to maintenance_docs (they will be placed at the beginning by organize_files_by_section)
+                    maintenance_docs = gutter_care_docs + maintenance_docs
                 else:
-                    logger.info(f"gutter_care.pdf not found in maintenance docs folder; skipping")
-
-                # 2) Fill the Perimeter Overflow & Recirculation System -gutter dwg.pdf
-                #    with each gutter's drawing number and replace the original in
-                #    the maintenance docs list.
-                perimeter_base = "Perimeter Overflow & Recirculation System -gutter dwg.pdf"
-                perimeter_path = None
-                perimeter_index = None
-                for i, p in enumerate(maintenance_docs):
-                    if os.path.basename(p).lower() == perimeter_base.lower():
-                        perimeter_path = p
-                        perimeter_index = i
-                        break
-
-                if perimeter_path:
-                    filled_perimeter = []
-                    for gutter in gutters_data:
-                        if gutter.get('drawing_number'):
-                            gutter_name_safe = gutter.get('gutter_name', f'Gutter_{gutter.get("gutter_id", 0)}')
-                            gutter_name_safe = gutter_name_safe.replace(' ', '_').replace('/', '_').replace('\\', '_')
-
-                            filled_gutter_doc = fill_gutter_maintenance_doc(perimeter_path, gutter, gutter_name=gutter_name_safe, output_dir=req_output_dir)
-                            if filled_gutter_doc:
-                                filled_perimeter.append(filled_gutter_doc)
-                                logger.info(f"Filled {perimeter_base} for {gutter['gutter_name']}")
-
-                    if filled_perimeter and perimeter_index is not None:
-                        maintenance_docs = maintenance_docs[:perimeter_index] + filled_perimeter + maintenance_docs[perimeter_index + 1:]
+                    logger.warning(f"gutter_care.pdf not found in maintenance docs folder: {gutter_care_path}")
             except Exception as e:
-                logger.error(f"Error preparing gutter maintenance docs: {e}")
+                logger.error(f"Error preparing gutter_care.pdf: {e}")
 
         # Find warranty docs based on keywords and append as last section
         warranty_docs = find_warranty_documents(item_keywords)
@@ -437,22 +366,9 @@ def index():
         except Exception as e:
             logger.error(f"Error swapping in filled maintenance docs: {e}")
 
-        # Determine cover page: prefer an unnumbered cover sheet from the
-        # cover_sheets folder; fill its form fields if it has them.
-        cover_info = parse_cover_sheets(COVER_SHEETS)
-        if cover_info.get('main_cover'):
-            cover_pdf_path = generate_cover_page(
-                customer, job_name, phone,
-                filters_data=filters_data,
-                output_dir=req_output_dir,
-                template_path=cover_info['main_cover']
-            )
-            logger.info(f"Using filled folder cover sheet as main cover: {os.path.basename(cover_pdf_path)}")
-        else:
-            cover_pdf_path = generate_cover_page(customer, job_name, phone, filters_data=filters_data, output_dir=req_output_dir)
-            logger.info(f"Generated cover page: {cover_pdf_path}")
-
-        cover_sheets = cover_info
+        # Create cover page with flow data from all filters
+        cover_pdf_path = generate_cover_page(customer, job_name, phone, filters_data=filters_data, output_dir=req_output_dir)
+        logger.info(f"Generated cover page: {cover_pdf_path}")
 
         # Organize files into sections
         output_pdf_path = os.path.join(req_output_dir, f'{job_name}_Manual.pdf')
@@ -471,25 +387,14 @@ def index():
         for i, pdf in enumerate(job_folder_paths, 1):
             logger.info(f"   {i}. {os.path.basename(pdf)}")
         
-        # pool_templates and pool_maintenance are already populated above.
-        logger.info(f"Templates grouped by pool: { {k: [os.path.basename(p) for p in v] for k,v in pool_templates.items()} }")
-
         # Create sections dictionary for organized merging
         sections = {
             'cover': cover_pdf_path,
-            # Only use the flat lists as shared items when not using parsed pools.
-            'templates': [] if use_parsed_pools else templates,
-            'maintenance': [] if use_parsed_pools else maintenance_docs,
-            'equipment_list': equipment_list_pdf,
+            'templates': templates,
+            'maintenance': maintenance_docs,
             # job_files will be set after filtering
             'job_files': [],
             'warranty': warranty_docs,
-            'pools_data': pools_data,
-            'pool_templates': pool_templates,
-            'pool_maintenance': pool_maintenance,
-            'pool_gutter_care': pool_gutter_care,
-            'cover_sheets': cover_sheets,
-            'always_include': ALWAYS_INCLUDE,
         }
         
         # Log detailed information about templates
@@ -512,7 +417,7 @@ def index():
         sections['job_files'] = filtered_job_files
 
         # For backward compatibility, keep a list of all PDFs
-        all_pdfs = [cover_pdf_path] + templates + maintenance_docs + ([equipment_list_pdf] if equipment_list_pdf else []) + filtered_job_files + warranty_docs
+        all_pdfs = [cover_pdf_path] + templates + maintenance_docs + filtered_job_files + warranty_docs
         logger.info(f"Total PDFs to merge: {len(all_pdfs)}")
         logger.info(f"Templates count: {len(templates)}")
         logger.info(f"Maintenance docs count: {len(maintenance_docs)}")
@@ -569,6 +474,68 @@ def index():
 
     return render_template('index.html')
 
+@app.get('/api/templates')
+def api_list_templates():
+    """List PDFs in template_cache with basic metadata and thumbnail URLs."""
+    try:
+        items = []
+        for fname in sorted(os.listdir(TEMPLATE_FOLDER)):
+            if not fname.lower().endswith('.pdf'):
+                continue
+            fpath = os.path.join(TEMPLATE_FOLDER, fname)
+            try:
+                stat = os.stat(fpath)
+                items.append({
+                    'name': fname,
+                    'size': stat.st_size,
+                    'mtime': stat.st_mtime,
+                    'thumbnail': f'/template_thumbnail?name={fname}'
+                })
+            except Exception:
+                continue
+        return jsonify({'templates': items})
+    except Exception as e:
+        logger.error(f"Error listing templates: {e}")
+        return jsonify({'error': str(e)}), 500
+
+def _ensure_thumbnail(pdf_path, thumb_path):
+    """Create a thumbnail PNG for the first page of pdf_path at thumb_path if missing or stale."""
+    try:
+        if os.path.exists(thumb_path):
+            pdf_mtime = os.path.getmtime(pdf_path)
+            thumb_mtime = os.path.getmtime(thumb_path)
+            if thumb_mtime >= pdf_mtime:
+                return True
+        doc = fitz.open(pdf_path)
+        if len(doc) == 0:
+            doc.close()
+            return False
+        page = doc[0]
+        pix = page.get_pixmap(matrix=fitz.Matrix(0.8, 0.8), alpha=False)
+        pix.save(thumb_path)
+        doc.close()
+        return True
+    except Exception as e:
+        logger.error(f"Thumbnail generation failed for {pdf_path}: {e}")
+        return False
+
+@app.get('/template_thumbnail')
+def template_thumbnail():
+    """Serve cached or on-the-fly thumbnail for a template PDF by name."""
+    name = request.args.get('name', '')
+    if not name or not name.lower().endswith('.pdf'):
+        return 'Invalid name', 400
+    safe_name = os.path.basename(name)
+    pdf_path = os.path.join(TEMPLATE_FOLDER, safe_name)
+    if not os.path.exists(pdf_path):
+        return 'Not found', 404
+    thumb_name = safe_name + '.png'
+    thumb_path = os.path.join(THUMBNAIL_FOLDER, thumb_name)
+    ok = _ensure_thumbnail(pdf_path, thumb_path)
+    if not ok or not os.path.exists(thumb_path):
+        return 'Thumbnail error', 500
+    return send_file(thumb_path, mimetype='image/png')
+
 @app.route('/regenerate_cover', methods=['POST'])
 def regenerate_cover():
     try:
@@ -578,37 +545,27 @@ def regenerate_cover():
         
         logger.info(f"Regenerating cover page for job: {job_name}")
         
-        # NOTE: Filter flow-rate data is no longer collected for cover pages. Cover page
-        # filling (customer / job / phone) remains active. Keeping the original code below
-        # commented in case management reverts this decision.
-        #
-        # # Get flow rate information for multiple filters
-        # filter_count = int(request.form.get('filter_count', '1'))
-        # logger.info(f"Processing {filter_count} filters for cover page")
-        #
-        # # Create a list to store flow data for each filter
-        # filters_data = []
-        #
-        # for i in range(1, filter_count + 1):
-        #     filter_data = {
-        #         'filter_name': request.form.get(f'filter_name_{i}', f'Filter {i}'),
-        #         'primary_flow_rate': request.form.get(f'primary_flow_rate_{i}', ''),
-        #         'backwash_rate': request.form.get(f'backwash_rate_{i}', ''),
-        #         'total_dynamic_head': request.form.get(f'total_dynamic_head_{i}', ''),
-        #     }
-        #     # Only add filters that have at least one value filled
-        #     if any(value for key, value in filter_data.items() if key != 'filter_name'):
-        #         filters_data.append(filter_data)
-        #         logger.info(f"Added flow data for {filter_data['filter_name']}")
+        # Get flow rate information for multiple filters
+        filter_count = int(request.form.get('filter_count', '1'))
+        logger.info(f"Processing {filter_count} filters for cover page")
         
-        filters_data = None
-        # Use the main cover sheet from cover_sheets folder if available, otherwise fall back
-        cover_info = parse_cover_sheets(COVER_SHEETS)
-        cover_path = generate_cover_page(
-            customer, job_name, phone,
-            filters_data=filters_data,
-            template_path=cover_info.get('main_cover')
-        )
+        # Create a list to store flow data for each filter
+        filters_data = []
+        
+        for i in range(1, filter_count + 1):
+            filter_data = {
+                'filter_name': request.form.get(f'filter_name_{i}', f'Filter {i}'),
+                'primary_flow_rate': request.form.get(f'primary_flow_rate_{i}', ''),
+                'backwash_rate': request.form.get(f'backwash_rate_{i}', ''),
+                'total_dynamic_head': request.form.get(f'total_dynamic_head_{i}', ''),
+            }
+            # Only add filters that have at least one value filled
+            if any(value for key, value in filter_data.items() if key != 'filter_name'):
+                filters_data.append(filter_data)
+                logger.info(f"Added flow data for {filter_data['filter_name']}")
+        
+        # Generate new cover page with flow data from all filters
+        cover_path = generate_cover_page(customer, job_name, phone, filters_data=filters_data)
         
         if not os.path.exists(cover_path):
             return "Failed to generate cover page", 500
@@ -629,8 +586,9 @@ def regenerate_cover():
 # Map folder names to their paths
 FOLDER_MAP = {
     'maintenance': MAINTENANCE_DOCS,
-    'warranty': WARRANTY_DOCS,
-    'cover_sheets': COVER_SHEETS
+    'installation': INSTALLATION_MANUALS,
+    'templates': TEMPLATE_FOLDER,
+    'warranty': WARRANTY_DOCS
 }
 
 @app.get('/api/files/<folder_type>')
@@ -769,6 +727,13 @@ def api_delete_file(folder_type):
     try:
         os.remove(file_path)
         logger.info(f"Deleted {filename} from {folder_type}")
+        
+        # Also delete thumbnail if it exists in template_cache
+        if folder_type == 'templates':
+            thumb_path = os.path.join(THUMBNAIL_FOLDER, filename + '.png')
+            if os.path.exists(thumb_path):
+                os.remove(thumb_path)
+                logger.info(f"Deleted thumbnail for {filename}")
         
         return jsonify({
             'success': True,

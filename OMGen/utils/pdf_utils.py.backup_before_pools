@@ -11,205 +11,94 @@ import time  # Added for timestamp generation
 
 logger = logging.getLogger(__name__)
 
-# Common equipment terms and their variations (expanded)
-EQUIPMENT_TERMS = {
-    "filter": ["filter", "filtration", "filtering", "horizontal filter", "vertical filter", "sand filter", "cartridge filter", "diatomaceous filter", "DE filter"],
-    "grate": ["grate", "grating", "floor grating", "gutter grating", "deck grate", "pool grate"],
-    "platform": ["platform", "walkway", "catwalk", "mezzanine", "starting platform", "starting block"],
-    "bulkhead": ["bulkhead", "partition", "wall panel", "bulkhead door"],
-    "pump": ["pump", "pumping", "circulation", "circulation pump", "variable speed pump", "vs pump"],
-    "tank": ["tank", "vessel", "container", "fiberglass tank", "fiberglass vessel", "fiberglass container", "surge tank"],
-    "valve": ["valve", "control valve", "check valve", "butterfly valve", "gate valve", "ball valve"],
-    "strainer": ["strainer", "screen", "separator", "hair strainer", "lint strainer"],
-    "meter": ["meter", "flow meter", "gauge", "flow gauge"],
-    "sensor": ["sensor", "detector", "probe", "pressure sensor", "temperature sensor"],
-    "gutter": ["gutter", "gutter grating", "gutter grate", "perimeter overflow", "recirculation", "recirculation system", "overflow gutter"],
-    "main drain": ["main drain", "main drain grate", "sump pump", "MD", "md", "main drain cover"],
-    "regenerator": ["regenerator", "regen", "regenerative", "regenerative filter", "regen filter", "regenerative filtration", "regen filtration"],
-    "evacuator": ["evacuator", "evac", "evacuator system", "vacuum system"],
-    "heater": ["heater", "heat pump", "gas heater", "electric heater"],
-    "chlorinator": ["chlorinator", "salt chlorinator", "salt cell", "chlorine generator"],
-    "light": ["light", "lighting", "led light", "pool light", "underwater light"],
-    "skimmer": ["skimmer", "surface skimmer", "automatic skimmer"],
-    "drain": ["drain", "floor drain", "bottom drain", "drain cover"]
-}
-
-# Model number patterns (more flexible)
-MODEL_PATTERNS = [
-    r'PPEC\d+S',  # PPEC model numbers
-    r'\d{3,4}S',  # 3-4 digit numbers ending in S
-    r'VSC\d+',    # VSC model numbers
-    r'[A-Z]{2,4}\d{3,4}[A-Z]?',  # General model pattern (letters + numbers + optional letter)
-]
-
-# Known pool/section labels used as sales-order separators.
-# Keep them specific to avoid matching equipment descriptions that happen to contain "pool".
-DEFAULT_POOL_LABELS = [
-    "main pool", "spa", "wading pool", "kiddie pool", "childrens pool",
-    "splash pad", "plunge pool", "therapy pool", "lap pool", "dive pool",
-    "competition pool", "recreational pool", "infinity pool",
-    "activity pool", "leisure pool", "training pool"
-]
-
-
-def _extract_keywords_from_lines(lines):
-    """Extract equipment keywords from a list of text lines, preserving order."""
-    keywords = []
-    seen = set()
-
-    for line in lines:
-        line_lower = line.lower().strip()
-        if not line_lower:
-            continue
-
-        # Skip lines that are just numbers or dates
-        if line_lower.replace('.', '').replace('/', '').replace('-', '').isdigit():
-            logger.debug(f"Skipping line that's just numbers/date: {line_lower}")
-            continue
-
-        # Split line by multiple delimiters (commas, tabs, semicolons, pipes)
-        delimiters = [',', '\t', ';', '|']
-        parts = [line_lower]
-        for delim in delimiters:
-            new_parts = []
-            for part in parts:
-                new_parts.extend(part.split(delim))
-            parts = new_parts
-
-        for part in parts:
-            part = part.strip()
-            if not part:
-                continue
-
-            # Skip parts that are just numbers
-            if part.replace('.', '').replace('-', '').isdigit():
-                continue
-
-            # Check for equipment terms and their variations (check all categories, don't break)
-            for category, variations in EQUIPMENT_TERMS.items():
-                if any(term in part for term in variations):
-                    # Clean up the line by removing common prefixes and suffixes
-                    cleaned_part = clean_product_line(part)
-                    if cleaned_part and cleaned_part not in seen:
-                        keywords.append(cleaned_part)
-                        seen.add(cleaned_part)
-                        logger.debug(f"Found keyword in category '{category}': {cleaned_part}")
-
-            # Check for model numbers using patterns
-            for pattern in MODEL_PATTERNS:
-                if re.search(pattern, part, re.IGNORECASE):
-                    if part not in seen:
-                        keywords.append(part)
-                        seen.add(part)
-                        logger.debug(f"Found model number pattern: {part}")
-
-    return keywords
-
-
-def _identify_pool_header(line, pool_labels=None):
-    """Return a clean pool name if the line looks like a pool separator, else None."""
-    labels = pool_labels or DEFAULT_POOL_LABELS
-    norm = re.sub(r'[^a-z0-9\s]', ' ', line.lower()).strip()
-
-    # Direct exact label match, e.g. "Main Pool", "Spa"
-    for label in labels:
-        if norm == label:
-            return label.title()
-
-    # "Pool 1 - Main Pool", "Pool #2 Main Pool", "Pool 2: Spa", etc.
-    m = re.match(r'^pool\s*#?\s*(\d+)\s*[-:\u2013\u2014]\s*(.+)$', norm)
-    if m:
-        tail = m.group(2).strip()
-        # If the tail is a known label, use it; otherwise treat it as a custom name
-        return tail.title()
-
-    # "Pool 1" (no label) – use generic name
-    m = re.match(r'^pool\s*#?\s*(\d+)\s*$', norm)
-    if m:
-        return f"Pool {m.group(1)}"
-
-    return None
-
-
-def sort_files_by_keyword_order(files, keywords):
-    """
-    Sort file paths by the earliest sales-order keyword that appears in each
-    filename. Files that don't match any keyword are placed at the end while
-    preserving their relative order.
-    """
-    if not files or not keywords:
-        return list(files)
-
-    def sort_key(path):
-        base = os.path.basename(path).lower()
-        for i, kw in enumerate(keywords):
-            if kw.lower() in base:
-                return (i, base)
-        return (len(keywords), base)
-
-    return sorted(files, key=sort_key)
-
-
 def extract_items_from_sales_order(pdf_path):
-    """Extract a flat list of equipment keywords from a sales order PDF."""
+    doc = fitz.open(pdf_path)
+    keywords = set()
+    
+    # Common equipment terms and their variations (expanded)
+    equipment_terms = {
+        "filter": ["filter", "filtration", "filtering", "horizontal filter", "vertical filter", "sand filter", "cartridge filter", "diatomaceous filter", "DE filter"],
+        "grate": ["grate", "grating", "floor grating", "gutter grating", "deck grate", "pool grate"],
+        "platform": ["platform", "walkway", "catwalk", "mezzanine", "starting platform", "starting block"],
+        "bulkhead": ["bulkhead", "partition", "wall panel", "bulkhead door"],
+        "pump": ["pump", "pumping", "circulation", "circulation pump", "variable speed pump", "vs pump"],
+        "tank": ["tank", "vessel", "container", "fiberglass tank", "fiberglass vessel", "fiberglass container", "surge tank"],
+        "valve": ["valve", "control valve", "check valve", "butterfly valve", "gate valve", "ball valve"],
+        "strainer": ["strainer", "screen", "separator", "hair strainer", "lint strainer"],
+        "meter": ["meter", "flow meter", "gauge", "flow gauge"],
+        "sensor": ["sensor", "detector", "probe", "pressure sensor", "temperature sensor"],
+        "gutter": ["gutter", "gutter grating", "gutter grate", "perimeter overflow", "recirculation", "recirculation system", "overflow gutter"],
+        "main drain": ["main drain", "main drain grate", "sump pump", "MD", "md", "main drain cover"],
+        "regenerator": ["regenerator", "regen", "regenerative", "regenerative filter", "regen filter", "regenerative filtration", "regen filtration"],
+        "evacuator": ["evacuator", "evac", "evacuator system", "vacuum system"],
+        "heater": ["heater", "heat pump", "gas heater", "electric heater"],
+        "chlorinator": ["chlorinator", "salt chlorinator", "salt cell", "chlorine generator"],
+        "light": ["light", "lighting", "led light", "pool light", "underwater light"],
+        "skimmer": ["skimmer", "surface skimmer", "automatic skimmer"],
+        "drain": ["drain", "floor drain", "bottom drain", "drain cover"]
+    }
+    
+    # Model number patterns (more flexible)
+    model_patterns = [
+        r'PPEC\d+S',  # PPEC model numbers
+        r'\d{3,4}S',  # 3-4 digit numbers ending in S
+        r'VSC\d+',    # VSC model numbers
+        r'[A-Z]{2,4}\d{3,4}[A-Z]?',  # General model pattern (letters + numbers + optional letter)
+    ]
+    
     logger.info(f"Processing PDF for keywords: {pdf_path}")
-    doc = fitz.open(pdf_path)
-    all_lines = []
+    
     for page in doc:
-        all_lines.extend(page.get_text().split('\n'))
-    keywords = _extract_keywords_from_lines(all_lines)
+        text = page.get_text()
+        lines = text.split('\n')
+        
+        for line in lines:
+            line_lower = line.lower().strip()
+            if not line_lower:
+                continue
+                
+            # Skip lines that are just numbers or dates
+            if line_lower.replace('.','').replace('/','').replace('-','').isdigit():
+                logger.debug(f"Skipping line that's just numbers/date: {line_lower}")
+                continue
+            
+            # Split line by multiple delimiters (commas, tabs, semicolons)
+            delimiters = [',', '\t', ';', '|']
+            parts = [line_lower]
+            for delim in delimiters:
+                new_parts = []
+                for part in parts:
+                    new_parts.extend(part.split(delim))
+                parts = new_parts
+            
+            for part in parts:
+                part = part.strip()
+                if not part:
+                    continue
+                    
+                # Skip parts that are just numbers
+                if part.replace('.','').replace('-','').isdigit():
+                    continue
+                
+                # Check for equipment terms and their variations (check all categories, don't break)
+                found_category = False
+                for category, variations in equipment_terms.items():
+                    if any(term in part for term in variations):
+                        # Clean up the line by removing common prefixes and suffixes
+                        cleaned_part = clean_product_line(part)
+                        if cleaned_part:
+                            keywords.add(cleaned_part)
+                            logger.debug(f"Found keyword in category '{category}': {cleaned_part}")
+                            found_category = True
+                
+                # Check for model numbers using patterns
+                for pattern in model_patterns:
+                    if re.search(pattern, part, re.IGNORECASE):
+                        keywords.add(part)
+                        logger.debug(f"Found model number pattern: {part}")
+    
     logger.info(f"Extracted {len(keywords)} keywords from {pdf_path}")
-    return keywords
-
-
-def extract_pools_from_sales_order(pdf_path, pool_labels=None):
-    """
-    Parse a sales order PDF that separates pools by headings/labels and return
-    per-pool equipment keywords.
-
-    Returns:
-        tuple (pools_data, pool_keywords_map) where:
-        - pools_data: list of {'pool_id': str, 'pool_name': str} dicts
-        - pool_keywords_map: dict mapping pool_id -> list of keywords
-
-    If no pool separators are found, a single default pool is returned containing
-    all extracted keywords.
-    """
-    logger.info(f"Processing sales order for pool separators: {pdf_path}")
-    doc = fitz.open(pdf_path)
-    all_lines = []
-    for page in doc:
-        all_lines.extend(page.get_text().split('\n'))
-
-    # Group lines by detected pool headers
-    default_group = {'pool_name': 'Default', 'lines': []}
-    groups = [default_group]
-    current = default_group
-
-    for line in all_lines:
-        pool_name = _identify_pool_header(line, pool_labels=pool_labels)
-        if pool_name:
-            new_group = {'pool_name': pool_name, 'lines': []}
-            groups.append(new_group)
-            current = new_group
-        else:
-            current['lines'].append(line)
-
-    # Build results; skip the default group if it's empty and we have real headers
-    if len(groups) > 1 and not default_group['lines']:
-        groups = groups[1:]
-
-    pools_data = []
-    pool_keywords_map = {}
-    for i, group in enumerate(groups, start=1):
-        pool_id = str(i)
-        pool_name = group['pool_name']
-        keywords = _extract_keywords_from_lines(group['lines'])
-        pools_data.append({'pool_id': pool_id, 'pool_name': pool_name})
-        pool_keywords_map[pool_id] = keywords
-        logger.info(f"Pool '{pool_name}' (id={pool_id}) -> {len(keywords)} keywords")
-
-    return pools_data, pool_keywords_map
+    return list(keywords)
 
 def clean_product_line(line):
     """Clean up a product line by removing common prefixes, suffixes, and numbers."""
@@ -262,123 +151,82 @@ def get_associated_documents(equipment_type, template_dir):
     logger.info(f"Found {len(available_docs)} maintenance docs")
     logger.debug(f"Available docs: {available_docs}")
 
-    # Variant-specific mappings. Each key is a specific product variant;
-    # during matching the LONGEST key that appears as a substring of the
-    # equipment_type wins, so "horizontal 2 cell linkage" beats "horizontal".
-    # Shared/general docs (filter tips, etc.) use broad category keys that
-    # only match when no more-specific key does.
+    # Define mappings of equipment types to their required care/maintenance docs
     maintenance_mappings = {
-        # ── Gutter ─────────────────────────────────────────────────────
         "gutter": [
-            "Perimeter Overflow & Recirculation System -gutter dwg.pdf",
+            "stainless_steel_care_maintenance.pdf",
+            "gutter_depth_marker_installation.pdf",
+            "gutter_grating_care.pdf",
+            "radius_vs_miter_gutter.pdf",
+            "Prevent-p-poster.pdf",
+            "Safety_Information.pdf"
         ],
-        # ── Filters (shared docs for any filter keyword) ───────────────
         "filter": [
-            "Filters Notes and Tips  rev06-2026.pdf",
-            "General Trouble-Shooting - Filter.pdf",
-            "Pressure Filter Winterizing.pdf",
+            "PPEC OperationHorizontal Manual-reviseFinal 12-20-17R.pdf",
+            "VSC Auto to Manual conversion.pdf",
+            "VSC Backwash Procedure.pdf",
+            "winterizing.pdf",
+            "vsc_instructions.pdf"
         ],
-        # ── Horizontal variants ────────────────────────────────────────
-        "horizontal manual linkage": [
-            "Horizontal Manual Linkage.pdf",
+        "pump": [
+            "strainer_install.pdf"
         ],
-        "horizontal manual valves": [
-            "Horizontal Manual Valves.pdf",
+        "strainer": [
+            "strainer_install.pdf"
         ],
-        "horizontal no face piping": [
-            "Horizontal No Face Piping.pdf",
-        ],
-        "horizontal stacked": [
-            "Horizontal Stacked with Manual Linkage.pdf",
-        ],
-        "horizontal 2 cell linkage": [
-            "Horizontal - 2 Cell Linkage Valves 2026.pdf",
-        ],
-        "horizontal 2 cell manual": [
-            "Horizontal - 2 Cell Manual Valves 2026.pdf",
-        ],
-        # ── Verticel variants ──────────────────────────────────────────
-        "2c verticel manual linkage": [
-            "2C Verticel Manual Linkage.pdf",
-        ],
-        "2c verticel manual valves": [
-            "2C Verticel Manual Valves.pdf",
-        ],
-        "3c verticel": [
-            "3C Verticel Manual Valves.pdf",
-        ],
-        # ── Regen ──────────────────────────────────────────────────────
-        "regen": [
-            "PPEC REGEN Installation and Operations Manual Updated 8-26.pdf",
-            "PPEC Regen O&M Manual Rev.04-11-24(10-2023)2.pdf",
-        ],
-        # ── Vacsand ────────────────────────────────────────────────────
-        "vacsand": [
-            "Vacuum Sand Filter Winterizing & Trouble Shooting.pdf",
-        ],
-        # ── Compak ─────────────────────────────────────────────────────
-        "compak": [
-            "Compak Manual VSC with Air Scour-Evacuator 2026.pdf",
-        ],
-        # ── High Flow variants ─────────────────────────────────────────
-        "high flow 4 manual valve": [
-            "High Flow With 4 Manual Valve 2026.pdf",
-        ],
-        "high flow linkage": [
-            "High Flow with Linkage Valves 2026.pdf",
-        ],
-        # ── Bulkhead ───────────────────────────────────────────────────
         "bulkhead": [
-            "Bulkhead HDPE O_M r6-2026.pdf",
+            "Bulkhead_Manual.pdf"
         ],
-        # ── Main Drain ─────────────────────────────────────────────────
         "main drain": [
-            "Paddock IAPMO R&T Main Drain Manual rev 05-2024r1.pdf",
+            "main drain installation warranty.pdf",
+            "Main_Drain_Manual.pdf"
         ],
-        # ── Evacuator ──────────────────────────────────────────────────
+        "starting platform": [
+            "Starting Platforms Install,Care&Maint rev.12-2022 wLogo.pdf",
+            "Powder Coated Metal Care 05-2023-2.pdf",
+            "Non-skid Change & or Replace material-platforms.pdf"
+        ],
         "evacuator": [
-            "EvacuatorSystems- Care&Maintenance.pdf",
+            "Install EvacWall-Mount Sys.pdf",
+            "deck_drain_evacuator.pdf",
+            "Gutter Evac Manual.pdf",
+            "Install EvacPVC Bench Sys.pdf",
+            "Installation Manual for the Paddock Evacuator 7-24 Rev03.pdf",
+            "bench_evacuator.pdf"
         ],
-        # ── Deck Drain ─────────────────────────────────────────────────
         "deck drain": [
-            "Modular Deck Drain & or Deck Drain+Evacuator Care&Maintenance.pdf",
-        ],
-        # ── Grating ────────────────────────────────────────────────────
-        "grating": [
-            "Grating HDPE.pdf",
-        ],
+            "deck_drain_instructions.pdf"
+        ]
     }
-
+    
     logger.info(f"Checking equipment type: {equipment_type}")
     associated_docs = []
-    eq_lower = equipment_type.lower().strip()
-
-    # Find the LONGEST mapping key whose words ALL appear in the equipment_type.
-    # This ensures "horizontal 2 cell linkage" wins over "horizontal", while
-    # still matching when extra words appear (e.g. "high flow with linkage valves"
-    # matches key "high flow linkage").
-    eq_words = set(eq_lower.split())
-    best_key = None
-    best_len = 0
-    for key in maintenance_mappings:
-        key_words = set(key.split())
-        if key_words.issubset(eq_words) and len(key) > best_len:
-            best_key = key
-            best_len = len(key)
-
-    if best_key:
-        logger.info(f"Best mapping key for '{equipment_type}': '{best_key}'")
-        doc_list = maintenance_mappings[best_key]
+    
+    # Try exact match first
+    if equipment_type in maintenance_mappings:
+        logger.info(f"Found exact match for equipment type: {equipment_type}")
+        doc_list = maintenance_mappings[equipment_type]
     else:
-        doc_list = []
+        # Try substring match
+        matched_types = [k for k in maintenance_mappings.keys() if k in equipment_type.lower()]
+        if matched_types:
+            logger.info(f"Found substring matches: {matched_types}")
+            doc_list = []
+            for matched_type in matched_types:
+                doc_list.extend(maintenance_mappings[matched_type])
+        else:
+            logger.info(f"No matches found for equipment type: {equipment_type}")
+            return []
 
-    logger.info(f"Looking for {len(doc_list)} mapped maintenance docs")
+    logger.info(f"Looking for {len(doc_list)} maintenance docs")
     for doc in doc_list:
+        # Try to find an exact match first
         if doc in available_docs:
             full_path = os.path.join(maintenance_docs_dir, doc)
             associated_docs.append(full_path)
             logger.info(f"Found maintenance doc: {doc}")
         else:
+            # Try case-insensitive match
             doc_lower = doc.lower()
             matches = [f for f in available_docs if f.lower() == doc_lower]
             if matches:
@@ -387,348 +235,14 @@ def get_associated_documents(equipment_type, template_dir):
                 logger.info(f"Found maintenance doc (case-insensitive): {matches[0]}")
             else:
                 logger.warning(f"Maintenance document not found: {doc}")
-
-    # Exact-name fallback: if the equipment_type closely matches a filename
-    # on disk (e.g. "2C Verticel Manual Linkage" -> "2C Verticel Manual Linkage.pdf"),
-    # include it.  Require the normalized strings to be EQUAL (not just substrings)
-    # to avoid false positives across variants.
-    if equipment_type and len(equipment_type.strip()) >= 10:
-        norm_eq = normalize_text(equipment_type)
-        for f in available_docs:
-            base_no_ext = os.path.splitext(f)[0]
-            norm_base = normalize_text(base_no_ext)
-            if norm_base and norm_eq == norm_base:
-                full_path = os.path.join(maintenance_docs_dir, f)
-                if full_path not in associated_docs:
-                    associated_docs.append(full_path)
-                    logger.info(f"Exact-name maintenance doc match for '{equipment_type}': {f}")
-
+    
     if not associated_docs:
         logger.warning(f"No maintenance docs found for equipment type: {equipment_type}")
     else:
         logger.info(f"Found {len(associated_docs)} maintenance docs")
         logger.debug(f"Full paths: {associated_docs}")
-
+    
     return associated_docs
-
-def parse_cover_sheets(cover_sheets_dir):
-    """
-    Parse the cover_sheets folder into distinct roles:
-      - main_cover:   unnumbered sheet intended as the manual cover (prefers a
-                      filename containing 'cover'; falls back to first unnumbered PDF)
-      - attention_page: unnumbered sheet whose filename contains 'attention'
-      - other_unnumbered: any remaining unnumbered PDFs, sorted alphabetically
-      - numbered_covers: list of (number, path) tuples sorted by leading number
-    """
-    if not os.path.isdir(cover_sheets_dir):
-        logger.warning(f"Cover sheets directory not found: {cover_sheets_dir}")
-        return {
-            'main_cover': None,
-            'attention_page': None,
-            'other_unnumbered': [],
-            'numbered_covers': []
-        }
-
-    numbered = []
-    unnumbered = []
-    for f in sorted(os.listdir(cover_sheets_dir)):
-        if not f.lower().endswith('.pdf'):
-            continue
-        full_path = os.path.join(cover_sheets_dir, f)
-        m = re.match(r'^(\d+)', f)
-        if m:
-            numbered.append((int(m.group(1)), full_path))
-        else:
-            unnumbered.append(full_path)
-
-    numbered.sort(key=lambda x: x[0])
-    unnumbered.sort(key=lambda x: os.path.basename(x).lower())
-
-    # Identify the attention page and the main cover from unnumbered sheets
-    attention_page = None
-    attention_candidates = [p for p in unnumbered if 'attention' in os.path.basename(p).lower()]
-    if attention_candidates:
-        attention_page = attention_candidates[0]
-
-    # Prefer the specific "Operation & Maintenance cover page" as the main cover
-    main_cover = None
-    for p in unnumbered:
-        if 'operation & maintenance cover page' in os.path.basename(p).lower():
-            main_cover = p
-            break
-
-    if main_cover is None:
-        cover_candidates = [p for p in unnumbered
-                            if 'cover' in os.path.basename(p).lower() and p != attention_page]
-        main_cover = cover_candidates[0] if cover_candidates else None
-
-    # Fallback: use the first unnumbered sheet that is not the attention page
-    if main_cover is None and unnumbered:
-        non_attention = [p for p in unnumbered if p != attention_page]
-        if non_attention:
-            main_cover = non_attention[0]
-
-    other_unnumbered = [p for p in unnumbered if p != main_cover and p != attention_page]
-    # Suppress alternate "cover page" files so only the chosen main cover is used as a cover
-    other_unnumbered = [p for p in other_unnumbered if 'cover page' not in os.path.basename(p).lower()]
-
-    logger.info(
-        f"Parsed cover sheets in {cover_sheets_dir}: "
-        f"main_cover={os.path.basename(main_cover) if main_cover else None}, "
-        f"attention_page={os.path.basename(attention_page) if attention_page else None}, "
-        f"numbered={len(numbered)}, other_unnumbered={len(other_unnumbered)}"
-    )
-    return {
-        'main_cover': main_cover,
-        'attention_page': attention_page,
-        'other_unnumbered': other_unnumbered,
-        'numbered_covers': numbered
-    }
-
-
-def _basename_matches_keywords(path, keywords):
-    """Check whether a file's basename contains any of the supplied keywords."""
-    if not keywords:
-        return False
-    base = os.path.basename(path).lower()
-    return any(k.lower() in base for k in keywords)
-
-
-def _organize_with_cover_sheets(cover_page, cover_info, templates, maintenance_docs,
-                                job_files, warranty_docs=None, equipment_list=None,
-                                pools_data=None, pool_templates=None,
-                                pool_maintenance=None, pool_gutter_care=None,
-                                always_include_dir=None):
-    """
-    Build the manual using the cover_sheets folder structure:
-      cover_page -> attention page -> unnumbered covers -> numbered section covers
-      with matching maintenance docs/templates grouped under each numbered cover.
-
-    When pools_data is provided, pool-specific items are further grouped under
-    a generated "Pool: <name>" sub-header within each section, while the numbered
-    cover sheets themselves are kept in their original order.
-    """
-    organized_files = []
-
-    # 1. Main cover page
-    if cover_page:
-        organized_files.append(cover_page)
-        logger.info(f"Added main cover page: {os.path.basename(cover_page)}")
-
-    # 2. Attention page
-    if cover_info.get('attention_page'):
-        organized_files.append(cover_info['attention_page'])
-        logger.info(f"Added attention page: {os.path.basename(cover_info['attention_page'])}")
-
-    # 3. Any other unnumbered cover sheets
-    for p in cover_info.get('other_unnumbered', []):
-        organized_files.append(p)
-        logger.info(f"Added extra unnumbered cover sheet: {os.path.basename(p)}")
-
-    # 4. Always-include docs after the front matter (TOC, special instructions)
-    project_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    maint_dir = os.path.join(project_dir, "maintenance_docs")
-    for p in [os.path.join(maint_dir, "table_of_contents.pdf"),
-              os.path.join(maint_dir, "special_instructions.pdf")]:
-        if os.path.exists(p) and p.lower().endswith('.pdf'):
-            organized_files.append(p)
-            logger.info(f"Inserted always-include doc after front matter: {os.path.basename(p)}")
-
-    pool_names = {p['pool_id']: p['pool_name'] for p in (pools_data or [])}
-    multi_pool = len(pool_names) > 1
-
-    # Map each pool-specific item back to its pool id. Items that appear in
-    # multiple pools are treated as shared and are not assigned to any pool.
-    template_pool_counts = {}
-    template_pool_map = {}
-    for pid, pt_list in (pool_templates or {}).items():
-        for t in pt_list:
-            template_pool_counts[t] = template_pool_counts.get(t, 0) + 1
-    for pid, pt_list in (pool_templates or {}).items():
-        for t in pt_list:
-            if template_pool_counts.get(t, 0) == 1:
-                template_pool_map[t] = pid
-
-    maintenance_pool_counts = {}
-    maintenance_pool_map = {}
-    for pid, pm_list in (pool_maintenance or {}).items():
-        for m in pm_list:
-            maintenance_pool_counts[m] = maintenance_pool_counts.get(m, 0) + 1
-    for pid, gc_list in (pool_gutter_care or {}).items():
-        for m in gc_list:
-            maintenance_pool_counts[m] = maintenance_pool_counts.get(m, 0) + 1
-    for pid, pm_list in (pool_maintenance or {}).items():
-        for m in pm_list:
-            if maintenance_pool_counts.get(m, 0) == 1:
-                maintenance_pool_map[m] = pid
-    for pid, gc_list in (pool_gutter_care or {}).items():
-        for m in gc_list:
-            if maintenance_pool_counts.get(m, 0) == 1:
-                maintenance_pool_map[m] = pid
-
-    # Combine shared items (templates/maintenance_docs) with pool-specific items
-    all_templates = list(templates or [])
-    if pool_templates:
-        for pt_list in pool_templates.values():
-            all_templates.extend(pt_list)
-
-    all_maintenance = list(maintenance_docs or [])
-    if pool_maintenance:
-        for pm_list in pool_maintenance.values():
-            all_maintenance.extend(pm_list)
-    if pool_gutter_care:
-        for gc_list in pool_gutter_care.values():
-            all_maintenance.extend(gc_list)
-
-    # Exclude docs placed explicitly elsewhere to avoid duplication
-    always_exclude_basenames = {'equipment list.pdf'}
-    all_maintenance = [m for m in all_maintenance
-                       if os.path.basename(m).lower() not in always_exclude_basenames]
-
-    # Deduplicate while preserving order
-    seen = set()
-    deduped_templates = []
-    for t in all_templates:
-        if t not in seen:
-            deduped_templates.append(t)
-            seen.add(t)
-    all_templates = deduped_templates
-
-    seen = set()
-    deduped_maintenance = []
-    for m in all_maintenance:
-        if m not in seen:
-            deduped_maintenance.append(m)
-            seen.add(m)
-    all_maintenance = deduped_maintenance
-
-    # Keywords that decide which section a document belongs under
-    section_keywords = {
-        2: ['perimeter', 'overflow', 'recirculation', 'gutter'],
-        3: ['filter'],
-    }
-
-    assigned_templates = set()
-    assigned_maintenance = set()
-
-    def _emit_grouped(items, pool_map, used_set, section_num, item_label):
-        """Place items matching the current section keywords, grouped by pool."""
-        by_pool = {pid: [] for pid in pool_names}
-        shared = []
-        keywords = section_keywords[section_num]
-
-        for item in items:
-            if item in used_set:
-                continue
-            if not _basename_matches_keywords(item, keywords):
-                continue
-            pid = pool_map.get(item)
-            if multi_pool and pid:
-                by_pool.setdefault(pid, []).append(item)
-            else:
-                shared.append(item)
-
-        # Emit pool groups in the order the pools were defined
-        for pool in (pools_data or []):
-            pid = pool['pool_id']
-            if by_pool.get(pid):
-                organized_files.append(create_section_header(f"Pool: {pool_names[pid]}"))
-                for item in by_pool[pid]:
-                    organized_files.append(item)
-                    used_set.add(item)
-                    logger.info(f"  {item_label} under section {section_num} for pool {pool_names[pid]}: {os.path.basename(item)}")
-
-        # Shared items (no pool assignment or single-pool mode)
-        for item in shared:
-            organized_files.append(item)
-            used_set.add(item)
-            logger.info(f"  {item_label} under section {section_num}: {os.path.basename(item)}")
-
-    def _emit_remaining(items, pool_map, used_set, item_label):
-        """Place remaining items, grouped by pool when a pool assignment exists."""
-        by_pool = {pid: [] for pid in pool_names}
-        shared = []
-
-        for item in items:
-            if item in used_set:
-                continue
-            pid = pool_map.get(item)
-            if multi_pool and pid:
-                by_pool.setdefault(pid, []).append(item)
-            else:
-                shared.append(item)
-
-        for pool in (pools_data or []):
-            pid = pool['pool_id']
-            if by_pool.get(pid):
-                organized_files.append(create_section_header(f"Pool: {pool_names[pid]}"))
-                for item in by_pool[pid]:
-                    organized_files.append(item)
-                    used_set.add(item)
-                    logger.info(f"Placed remaining {item_label} in section 4 for pool {pool_names[pid]}: {os.path.basename(item)}")
-
-        for item in shared:
-            organized_files.append(item)
-            used_set.add(item)
-            logger.info(f"Placed remaining {item_label} in section 4: {os.path.basename(item)}")
-
-    numbered = sorted(cover_info.get('numbered_covers', []), key=lambda x: x[0])
-
-    for num, cover_path in numbered:
-        # Insert always-include docs right before the warranty/drawings section cover
-        if num == 5 and always_include_dir and os.path.isdir(always_include_dir):
-            for ai in sorted(os.listdir(always_include_dir)):
-                if ai.lower().endswith('.pdf'):
-                    ai_path = os.path.join(always_include_dir, ai)
-                    organized_files.append(ai_path)
-                    logger.info(f"Inserted always-include doc before warranty section: {ai}")
-
-        organized_files.append(cover_path)
-        logger.info(f"Added numbered section cover ({num}): {os.path.basename(cover_path)}")
-
-        if num in section_keywords:
-            _emit_grouped(all_templates, template_pool_map, assigned_templates, num, "Template")
-            _emit_grouped(all_maintenance, maintenance_pool_map, assigned_maintenance, num, "Maintenance doc")
-
-        elif num == 4:
-            # Section 4 is the catch-all for remaining maintenance/product info
-            _emit_remaining(all_templates, template_pool_map, assigned_templates, "template")
-            _emit_remaining(all_maintenance, maintenance_pool_map, assigned_maintenance, "maintenance doc")
-
-        elif num == 5:
-            # Section 5: Warranty & Drawings -- project docs and warranty docs
-            if equipment_list:
-                organized_files.append(equipment_list)
-                logger.info(f"Added equipment list: {os.path.basename(equipment_list)}")
-            if job_files:
-                organized_files.extend(job_files)
-                logger.info(f"Added {len(job_files)} job files under warranty/drawings section")
-            if warranty_docs:
-                organized_files.extend(warranty_docs)
-                logger.info(f"Added {len(warranty_docs)} warranty docs under warranty/drawings section")
-
-    # If no #5 numbered cover exists, fall back to legacy project/warranty sections
-    if not any(num == 5 for num, _ in numbered):
-        if equipment_list or job_files:
-            project_header = create_section_header("Project Documentation")
-            organized_files.append(project_header)
-            logger.info("Added project documentation header to organized files")
-            if equipment_list:
-                organized_files.append(equipment_list)
-                logger.info(f"Added equipment list: {os.path.basename(equipment_list)}")
-            organized_files.extend(job_files or [])
-            logger.info(f"Added {len(job_files or [])} job files to organized files")
-
-        if warranty_docs:
-            warranty_header = create_section_header("Warranty Documents")
-            organized_files.append(warranty_header)
-            logger.info("Added warranty header to organized files")
-            organized_files.extend(warranty_docs)
-            logger.info(f"Added {len(warranty_docs)} warranty docs to organized files")
-
-    logger.info(f"Total organized files: {len(organized_files)}")
-    return organized_files
-
 
 def find_warranty_documents(keywords):
     """
@@ -766,12 +280,7 @@ def find_warranty_documents(keywords):
 
         # Model number cues for regenerator filters
         model_cues = {"ppec", "1400s", "1200s", "2100s", "500s", "700s", "225s", "900s", "350s"}
-        # If the sales order explicitly references a Vacsand/Compak vacuum sand
-        # filter, do NOT infer a regenerator from shared model-number cues.
-        has_vacsand = any("vacuum" in k or "vacsand" in k or "compak" in k for k in norm_kws)
-        has_regen_model = not has_vacsand and any(
-            any(cue in k for cue in model_cues) for k in norm_kws
-        )
+        has_regen_model = any(any(cue in k for cue in model_cues) for k in norm_kws)
 
         # 2) Detect specific equipment categories from keywords.
         #    Each category key maps to EXACT filename substrings (after normalization)
@@ -851,11 +360,10 @@ def find_warranty_documents(keywords):
             "compak":                  ["compak"],
             "verticel sand filter":    ["verticel sand filter"],
             "regenerator":             ["regenerator warranty", "regenerator"],
-            # Gutter sub-types — the actual warranty file is
-            # "GutterSTD 1yrHDPE-STD 10yrWARRANTY rev 6-2026.pdf"
-            "gutter_hdpe":             ["gutterstd"],
-            "gutter_hdpe_grating_only":["gutterstd"],
-            "gutter_std":              ["gutterstd"],
+            # Gutter sub-types — each maps to only one or two specific files
+            "gutter_hdpe":             ["warranty gutterhdpe"],
+            "gutter_hdpe_grating_only":["warranty 1yr hdpe gutter gratingonly", "warranty hdpe grating"],
+            "gutter_std":              ["warranty gutter only std"],
             # Other equipment
             "strainer":                ["ss strainer"],
             "evacuator":               ["evac system", "evacuator"],
@@ -1052,209 +560,185 @@ def match_templates(keywords, template_dir, flow_data=None, filters_data=None, t
             non_flow = [t for t in template_list if t not in flow_templates]
             template_list = sorted(list(flow_templates)) + non_flow
     
-    # NOTE: Filter flow-rate fill-out is disabled. Filter templates are now boilerplate
-    # documents and are no longer auto-filled with flow data. The original block is kept
-    # below (commented) in case management reverts this decision.
-    #
-    # # If we have flow data, fill it in the templates
-    # if filters_data:
-    #     logger.info(f"Filling flow data from {len(filters_data)} filters in matched templates...")
-    #     filled_templates = []
-    #
-    #     # Check if each template has form fields that can be filled with flow data
-    #     logger.info(f"Processing {len(template_list)} templates for {len(filters_data)} filters")
-    #     logger.info(f"Template paths: {[os.path.basename(t) for t in template_list]}")
-    #
-    #     # Clear the filled directory ONCE to avoid using old files (only when not using isolated workspace)
-    #     if not output_dir:
-    #         filled_dir = os.path.join(template_dir, 'filled')
-    #         if os.path.exists(filled_dir):
-    #             logger.info(f"Clearing filled directory: {filled_dir}")
-    #             try:
-    #                 for file in os.listdir(filled_dir):
-    #                     if file.endswith('.pdf'):
-    #                         file_path = os.path.join(filled_dir, file)
-    #                         os.remove(file_path)
-    #                         logger.info(f"Removed old file: {file}")
-    #             except Exception as e:
-    #                 logger.error(f"Error clearing filled directory: {str(e)}")
-    #
-    #     # Log template mappings if provided
-    #     if template_mappings:
-    #         logger.info(f"Using template mappings: {template_mappings}")
-    #
-    #     for template_path in template_list:
-    #         template_name = os.path.basename(template_path)
-    #         logger.info(f"Checking template: {template_name}")
-    #         has_flow_fields = check_template_for_flow_fields(template_path)
-    #         has_gutter_fields = check_template_for_gutter_fields(template_path)
-    #         logger.info(f"Template {template_name} has flow fields: {has_flow_fields}")
-    #         logger.info(f"Template {template_name} has gutter fields: {has_gutter_fields}")
-    #
-    #         if has_flow_fields:
-    #             # Check if we have a mapping for this template
-    #             mapped_filter_id = None
-    #             if template_mappings and template_name in template_mappings:
-    #                 mapped_filter_id = template_mappings[template_name]
-    #                 logger.info(f"Found mapping for template {template_name}: filter ID {mapped_filter_id}")
-    #
-    #             # If we have a mapping, use only that filter's data
-    #             if mapped_filter_id and filters_data:
-    #                 # Find the filter with the matching ID
-    #                 matched_filter = None
-    #                 for filter_data in filters_data:
-    #                     if filter_data.get('filter_id') == mapped_filter_id:
-    #                         matched_filter = filter_data
-    #                         break
-    #
-    #                 if matched_filter:
-    #                     filter_name = matched_filter.get('filter_name', f"Filter {mapped_filter_id}")
-    #                     logger.info(f"Using mapped filter: {filter_name} for template {template_name}")
-    #
-    #                     # Create a unique name for this filter's copy of the template
-    #                     fill_dir = output_dir or os.path.join(os.path.dirname(template_path), 'filled')
-    #                     os.makedirs(fill_dir, exist_ok=True)
-    #                     base_name = template_name
-    #                     filter_name_safe = filter_name.replace(' ', '_').replace('/', '_').replace('\\', '_')
-    #
-    #                     # Create a unique identifier
-    #                     timestamp = int(time.time() * 1000)
-    #                     unique_id = f'{filter_name_safe}_{timestamp}'
-    #
-    #                     # Fill the template with this filter's data
-    #                     filled_path = fill_pdf_form_fields(template_path, matched_filter, filter_name=unique_id, gutter_data=gutter_data, output_dir=output_dir)
-    #
-    #                     if filled_path:
-    #                         logger.info(f"Successfully filled template for {filter_name}, path: {filled_path}")
-    #                         filled_templates.append(filled_path)
-    #                     else:
-    #                         logger.warning(f"Could not fill fields for {filter_name}, using original template")
-    #                         filled_templates.append(template_path)
-    #                 else:
-    #                     logger.warning(f"Mapped filter ID {mapped_filter_id} not found, using original template")
-    #                     filled_templates.append(template_path)
-    #
-    #             # If no mapping or mapping failed, use the old approach (create a copy for each filter)
-    #             elif filters_data and not mapped_filter_id:
-    #                 logger.info(f"No mapping for template {template_name}, creating copies for filters")
-    #
-    #                 # Only create multiple copies if there are actually multiple filters
-    #                 if len(filters_data) > 1:
-    #                     # For templates with flow fields, create a copy for each filter
-    #                     for i, filter_data in enumerate(filters_data):
-    #                         filter_name = filter_data.get('filter_name', f'Filter {i+1}')
-    #                         logger.info(f"Processing filter {i+1}/{len(filters_data)}: {filter_name}")
-    #
-    #                         # Create a unique name for this filter's copy of the template
-    #                         fill_dir = output_dir or os.path.join(os.path.dirname(template_path), 'filled')
-    #                         os.makedirs(fill_dir, exist_ok=True)
-    #                         base_name = template_name
-    #                         filter_name_safe = filter_name.replace(' ', '_').replace('/', '_').replace('\\', '_')
-    #
-    #                         # Create a unique identifier
-    #                         timestamp = int(time.time() * 1000) + i
-    #                         unique_id = f'{filter_name_safe}_{timestamp}'
-    #
-    #                         # Try to fill the template with this filter's data
-    #                         filled_path = fill_pdf_form_fields(template_path, filter_data, filter_name=unique_id, gutter_data=gutter_data, output_dir=output_dir)
-    #
-    #                         if filled_path:
-    #                             logger.info(f"Successfully filled template for {filter_name}, path: {filled_path}")
-    #                             filled_templates.append(filled_path)
-    #                             break  # Only use the first successful fill
-    #
-    #                     # If no filter worked, add the original template
-    #                     if len(filled_templates) == 0 or filled_templates[-1] != filled_path:
-    #                         logger.warning(f"Could not fill template with any filter data, using original")
-    #                         filled_templates.append(template_path)
-    #                 else:
-    #                     # Only one filter, just fill once
-    #                     filter_data = filters_data[0]
-    #                     filter_name = filter_data.get('filter_name', 'Filter 1')
-    #                     logger.info(f"Single filter detected: {filter_name}, filling template once")
-    #
-    #                     # Create a unique name for this filter's copy of the template
-    #                     fill_dir = output_dir or os.path.join(os.path.dirname(template_path), 'filled')
-    #                     os.makedirs(fill_dir, exist_ok=True)
-    #                     base_name = template_name
-    #                     filter_name_safe = filter_name.replace(' ', '_').replace('/', '_').replace('\\', '_')
-    #
-    #                     # Create a unique identifier
-    #                     timestamp = int(time.time() * 1000)
-    #                     unique_id = f'{filter_name_safe}_{timestamp}'
-    #
-    #                     # Try to fill the template with the filter's data
-    #                     filled_path = fill_pdf_form_fields(template_path, filter_data, filter_name=unique_id, gutter_data=gutter_data, output_dir=output_dir)
-    #
-    #                     if filled_path:
-    #                         logger.info(f"Successfully filled template for {filter_name}, path: {filled_path}")
-    #                         filled_templates.append(filled_path)
-    #                     else:
-    #                         logger.warning(f"Could not fill template with filter data, using original")
-    #                         filled_templates.append(template_path)
-    #             else:
-    #                 # No filters data available
-    #                 logger.info(f"No filter data available for template {template_name}")
-    #                 filled_templates.append(template_path)
-    #         else:
-    #             # If no flow fields, try gutter-only fill when gutter data is provided
-    #             if gutter_data and has_gutter_fields and any(gutter_data.get(k) for k in ['inlet_count', 'inlet_size', 'drawing_number']):
-    #                 logger.info(f"Template {os.path.basename(template_path)} has gutter fields and gutter_data; attempting gutter fill")
-    #                 filled_path = fill_pdf_form_fields(template_path, {}, filter_name=None, gutter_data=gutter_data, output_dir=output_dir)
-    #                 if filled_path:
-    #                     filled_templates.append(filled_path)
-    #                 else:
-    #                     filled_templates.append(template_path)
-    #             else:
-    #                 # For templates without applicable fields, just add the original once
-    #                 logger.info(f"Template {os.path.basename(template_path)} has no applicable fields, adding as-is")
-    #                 filled_templates.append(template_path)
-    #
-    #     logger.info(f"Final template list contains {len(filled_templates)} templates: {[os.path.basename(t) for t in filled_templates]}")
-    #
-    #     # Ensure we're not losing any templates
-    #     if len(filled_templates) < len(filters_data):
-    #         logger.warning(f"WARNING: Expected at least {len(filters_data)} templates (one per filter), but only got {len(filled_templates)}")
-    #
-    #     template_list = filled_templates
-    #     logger.info(f"Returning {len(template_list)} templates from match_templates function")
-    #
-    #     # Double check that the files actually exist
-    #     for i, template in enumerate(template_list):
-    #         if os.path.exists(template):
-    #             logger.info(f"Template {i+1} exists: {os.path.basename(template)}")
-    #         else:
-    #             logger.error(f"Template {i+1} DOES NOT EXIST: {template}")
-    #
-    #     logger.info("========== FINISHED TEMPLATE MATCHING ==========")
-    # elif flow_data:  # For backward compatibility
-    #     logger.info("Filling flow data in matched templates using legacy flow_data...")
-    #     filled_templates = []
-    #     for template_path in template_list:
-    #         filled_path = fill_pdf_form_fields(template_path, flow_data, output_dir=output_dir)
-    #         if filled_path:
-    #             logger.info(f"Filled template {os.path.basename(template_path)} with flow data")
-    #             filled_templates.append(filled_path)
-    #         else:
-    #             filled_templates.append(template_path)
-    #     template_list = filled_templates
-
-    # Gutter-only fill path: templates with gutter form fields (and no flow fields) are still
-    # filled with the supplied gutter data. This runs independently of the disabled filter flow-rate
-    # fill-out path so gutter templates remain unaffected.
-    if gutter_data:
+    # If we have flow data, fill it in the templates
+    if filters_data:
+        logger.info(f"Filling flow data from {len(filters_data)} filters in matched templates...")
         filled_templates = []
+        
+        # Check if each template has form fields that can be filled with flow data
+        logger.info(f"Processing {len(template_list)} templates for {len(filters_data)} filters")
+        logger.info(f"Template paths: {[os.path.basename(t) for t in template_list]}")
+        
+        # Clear the filled directory ONCE to avoid using old files (only when not using isolated workspace)
+        if not output_dir:
+            filled_dir = os.path.join(template_dir, 'filled')
+            if os.path.exists(filled_dir):
+                logger.info(f"Clearing filled directory: {filled_dir}")
+                try:
+                    for file in os.listdir(filled_dir):
+                        if file.endswith('.pdf'):
+                            file_path = os.path.join(filled_dir, file)
+                            os.remove(file_path)
+                            logger.info(f"Removed old file: {file}")
+                except Exception as e:
+                    logger.error(f"Error clearing filled directory: {str(e)}")
+        
+        # Log template mappings if provided
+        if template_mappings:
+            logger.info(f"Using template mappings: {template_mappings}")
+        
         for template_path in template_list:
             template_name = os.path.basename(template_path)
+            logger.info(f"Checking template: {template_name}")
             has_flow_fields = check_template_for_flow_fields(template_path)
             has_gutter_fields = check_template_for_gutter_fields(template_path)
-            if not has_flow_fields and has_gutter_fields and gutter_data.get('drawing_number'):
-                logger.info(f"Template {template_name} has gutter fields and gutter_data; attempting gutter fill")
-                filled_path = fill_pdf_form_fields(template_path, {}, filter_name=None, gutter_data=gutter_data, output_dir=output_dir)
-                if filled_path:
-                    filled_templates.append(filled_path)
+            logger.info(f"Template {template_name} has flow fields: {has_flow_fields}")
+            logger.info(f"Template {template_name} has gutter fields: {has_gutter_fields}")
+            
+            if has_flow_fields:
+                # Check if we have a mapping for this template
+                mapped_filter_id = None
+                if template_mappings and template_name in template_mappings:
+                    mapped_filter_id = template_mappings[template_name]
+                    logger.info(f"Found mapping for template {template_name}: filter ID {mapped_filter_id}")
+                
+                # If we have a mapping, use only that filter's data
+                if mapped_filter_id and filters_data:
+                    # Find the filter with the matching ID
+                    matched_filter = None
+                    for filter_data in filters_data:
+                        if filter_data.get('filter_id') == mapped_filter_id:
+                            matched_filter = filter_data
+                            break
+                    
+                    if matched_filter:
+                        filter_name = matched_filter.get('filter_name', f"Filter {mapped_filter_id}")
+                        logger.info(f"Using mapped filter: {filter_name} for template {template_name}")
+                        
+                        # Create a unique name for this filter's copy of the template
+                        fill_dir = output_dir or os.path.join(os.path.dirname(template_path), 'filled')
+                        os.makedirs(fill_dir, exist_ok=True)
+                        base_name = template_name
+                        filter_name_safe = filter_name.replace(' ', '_').replace('/', '_').replace('\\', '_')
+                        
+                        # Create a unique identifier
+                        timestamp = int(time.time() * 1000)
+                        unique_id = f'{filter_name_safe}_{timestamp}'
+                        
+                        # Fill the template with this filter's data
+                        filled_path = fill_pdf_form_fields(template_path, matched_filter, filter_name=unique_id, gutter_data=gutter_data, output_dir=output_dir)
+                        
+                        if filled_path:
+                            logger.info(f"Successfully filled template for {filter_name}, path: {filled_path}")
+                            filled_templates.append(filled_path)
+                        else:
+                            logger.warning(f"Could not fill fields for {filter_name}, using original template")
+                            filled_templates.append(template_path)
+                    else:
+                        logger.warning(f"Mapped filter ID {mapped_filter_id} not found, using original template")
+                        filled_templates.append(template_path)
+                
+                # If no mapping or mapping failed, use the old approach (create a copy for each filter)
+                elif filters_data and not mapped_filter_id:
+                    logger.info(f"No mapping for template {template_name}, creating copies for filters")
+                    
+                    # Only create multiple copies if there are actually multiple filters
+                    if len(filters_data) > 1:
+                        # For templates with flow fields, create a copy for each filter
+                        for i, filter_data in enumerate(filters_data):
+                            filter_name = filter_data.get('filter_name', f'Filter {i+1}')
+                            logger.info(f"Processing filter {i+1}/{len(filters_data)}: {filter_name}")
+                            
+                            # Create a unique name for this filter's copy of the template
+                            fill_dir = output_dir or os.path.join(os.path.dirname(template_path), 'filled')
+                            os.makedirs(fill_dir, exist_ok=True)
+                            base_name = template_name
+                            filter_name_safe = filter_name.replace(' ', '_').replace('/', '_').replace('\\', '_')
+                            
+                            # Create a unique identifier
+                            timestamp = int(time.time() * 1000) + i
+                            unique_id = f'{filter_name_safe}_{timestamp}'
+                            
+                            # Try to fill the template with this filter's data
+                            filled_path = fill_pdf_form_fields(template_path, filter_data, filter_name=unique_id, gutter_data=gutter_data, output_dir=output_dir)
+                            
+                            if filled_path:
+                                logger.info(f"Successfully filled template for {filter_name}, path: {filled_path}")
+                                filled_templates.append(filled_path)
+                                break  # Only use the first successful fill
+                        
+                        # If no filter worked, add the original template
+                        if len(filled_templates) == 0 or filled_templates[-1] != filled_path:
+                            logger.warning(f"Could not fill template with any filter data, using original")
+                            filled_templates.append(template_path)
+                    else:
+                        # Only one filter, just fill once
+                        filter_data = filters_data[0]
+                        filter_name = filter_data.get('filter_name', 'Filter 1')
+                        logger.info(f"Single filter detected: {filter_name}, filling template once")
+                        
+                        # Create a unique name for this filter's copy of the template
+                        fill_dir = output_dir or os.path.join(os.path.dirname(template_path), 'filled')
+                        os.makedirs(fill_dir, exist_ok=True)
+                        base_name = template_name
+                        filter_name_safe = filter_name.replace(' ', '_').replace('/', '_').replace('\\', '_')
+                        
+                        # Create a unique identifier
+                        timestamp = int(time.time() * 1000)
+                        unique_id = f'{filter_name_safe}_{timestamp}'
+                        
+                        # Try to fill the template with the filter's data
+                        filled_path = fill_pdf_form_fields(template_path, filter_data, filter_name=unique_id, gutter_data=gutter_data, output_dir=output_dir)
+                        
+                        if filled_path:
+                            logger.info(f"Successfully filled template for {filter_name}, path: {filled_path}")
+                            filled_templates.append(filled_path)
+                        else:
+                            logger.warning(f"Could not fill template with filter data, using original")
+                            filled_templates.append(template_path)
                 else:
+                    # No filters data available
+                    logger.info(f"No filter data available for template {template_name}")
                     filled_templates.append(template_path)
+            else:
+                # If no flow fields, try gutter-only fill when gutter data is provided
+                if gutter_data and has_gutter_fields and any(gutter_data.get(k) for k in ['inlet_count', 'inlet_size', 'drawing_number']):
+                    logger.info(f"Template {os.path.basename(template_path)} has gutter fields and gutter_data; attempting gutter fill")
+                    filled_path = fill_pdf_form_fields(template_path, {}, filter_name=None, gutter_data=gutter_data, output_dir=output_dir)
+                    if filled_path:
+                        filled_templates.append(filled_path)
+                    else:
+                        filled_templates.append(template_path)
+                else:
+                    # For templates without applicable fields, just add the original once
+                    logger.info(f"Template {os.path.basename(template_path)} has no applicable fields, adding as-is")
+                    filled_templates.append(template_path)
+                
+        logger.info(f"Final template list contains {len(filled_templates)} templates: {[os.path.basename(t) for t in filled_templates]}")
+        
+        # Ensure we're not losing any templates
+        if len(filled_templates) < len(filters_data):
+            logger.warning(f"WARNING: Expected at least {len(filters_data)} templates (one per filter), but only got {len(filled_templates)}")
+                
+        template_list = filled_templates
+        logger.info(f"Returning {len(template_list)} templates from match_templates function")
+        
+        # Double check that the files actually exist
+        for i, template in enumerate(template_list):
+            if os.path.exists(template):
+                logger.info(f"Template {i+1} exists: {os.path.basename(template)}")
+            else:
+                logger.error(f"Template {i+1} DOES NOT EXIST: {template}")
+        
+        logger.info("========== FINISHED TEMPLATE MATCHING ==========")
+    elif flow_data:  # For backward compatibility
+        logger.info("Filling flow data in matched templates using legacy flow_data...")
+        filled_templates = []
+        for template_path in template_list:
+            filled_path = fill_pdf_form_fields(template_path, flow_data, output_dir=output_dir)
+            if filled_path:
+                logger.info(f"Filled template {os.path.basename(template_path)} with flow data")
+                filled_templates.append(filled_path)
             else:
                 filled_templates.append(template_path)
         template_list = filled_templates
@@ -1262,26 +746,18 @@ def match_templates(keywords, template_dir, flow_data=None, filters_data=None, t
     logger.info(f"Found {len(template_list)} templates and {len(maintenance_list)} maintenance docs")
     return template_list, maintenance_list
 
-def generate_cover_page(customer, job_name, phone, flow_data=None, filters_data=None, output_dir=None, template_path=None):
+def generate_cover_page(customer, job_name, phone, flow_data=None, filters_data=None, output_dir=None):
     """
-    Generate a filled cover page using a template PDF with form fields.
-    If template_path is provided and exists, it is used; otherwise the function
-    looks for a default cover template and falls back to generating a simple
-    centered page if none is found.
+    Generate a simplified, centered cover page using the template.
+    Shows only customer, job name, and phone in larger, centered text.
     """
     import os
 
-    # Resolve the template to use
-    if template_path and os.path.exists(template_path):
-        pass
-    else:
-        # Legacy/default template in project root
-        default_template = os.path.join(os.path.dirname(os.path.dirname(__file__)), "Cover Sheet Template.pdf")
-        if os.path.exists(default_template):
-            template_path = default_template
-        else:
-            logger.error(f"Cover page template not found at: {template_path or default_template}")
-            raise FileNotFoundError("Cover page template not found")
+    # Get the template path
+    template_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "Cover Sheet Template.pdf")
+    if not os.path.exists(template_path):
+        logger.error(f"Cover page template not found at: {template_path}")
+        raise FileNotFoundError("Cover page template not found")
 
     # Create output path
     if output_dir:
@@ -1290,7 +766,7 @@ def generate_cover_page(customer, job_name, phone, flow_data=None, filters_data=
         cover_path = os.path.join("output", f"cover_{job_name}.pdf")
     os.makedirs(os.path.dirname(cover_path), exist_ok=True)
 
-    logger.info(f"Generating cover page for job: {job_name}")
+    logger.info(f"Generating centered cover page for job: {job_name}")
     logger.info(f"Template path: {template_path}")
     logger.info(f"Output path: {cover_path}")
 
@@ -1304,11 +780,9 @@ def generate_cover_page(customer, job_name, phone, flow_data=None, filters_data=
 
         logger.info(f"Cover values => customer='{customer}', job_name='{job_name}', phone='{phone}', date='{today}'")
 
-        # Map normalized field names to their fill values.
-        # Support both the older 'Date Created' label and a plain 'Date' field.
+        # Map normalized field names to their fill values
         field_map = {
             'date created': today,
-            'date': today,
             'customer name': customer or '',
             'job name': job_name or '',
             'phone': phone or '',
@@ -1904,54 +1378,24 @@ def create_section_header(title):
     c.save()
     return header_path
 
-def organize_files_by_section(cover_page, templates, maintenance_docs, job_files, warranty_docs=None, pools_data=None, pool_templates=None, pool_maintenance=None, pool_gutter_care=None, equipment_list=None, cover_sheets=None, always_include_dir=None):
+def organize_files_by_section(cover_page, templates, maintenance_docs, job_files, warranty_docs=None):
     """
     Organize files into sections with headers.
-
+    
     Args:
         cover_page: Path to cover page
         templates: List of template file paths
         maintenance_docs: List of maintenance document paths
         job_files: List of job folder file paths
-        warranty_docs: List of warranty document paths
-        pools_data: Optional list of pool dicts with 'pool_id' and 'pool_name'
-        pool_templates: Optional dict mapping pool_id -> list of template paths
-        pool_maintenance: Optional dict mapping pool_id -> list of maintenance doc paths
-        pool_gutter_care: Optional dict mapping pool_id -> list of gutter care paths
-        cover_sheets: Either a list of extra cover sheets (legacy) or a dict
-                      returned by parse_cover_sheets() that drives numbered
-                      section-divider layout.
     Returns:
         List of organized file paths including section headers
     """
     organized_files = []
-
-    # If cover_sheets is the parsed dict with numbered section dividers, use the
-    # new cover-sheet-driven layout and skip the legacy section organization.
-    if isinstance(cover_sheets, dict):
-        return _organize_with_cover_sheets(
-            cover_page, cover_info=cover_sheets,
-            templates=templates, maintenance_docs=maintenance_docs,
-            job_files=job_files, warranty_docs=warranty_docs,
-            equipment_list=equipment_list,
-            pools_data=pools_data,
-            pool_templates=pool_templates,
-            pool_maintenance=pool_maintenance,
-            pool_gutter_care=pool_gutter_care,
-            always_include_dir=always_include_dir
-        )
-
+    
     # Add cover page
     if cover_page:
         organized_files.append(cover_page)
         logger.info(f"Added cover page to organized files: {os.path.basename(cover_page)}")
-
-        # Legacy: insert a flat list of extra cover sheets right after the cover
-        if cover_sheets and isinstance(cover_sheets, list):
-            for cs in cover_sheets:
-                organized_files.append(cs)
-                logger.info(f"Inserted cover sheet after cover page: {os.path.basename(cs)}")
-
         # Immediately after cover, include Table of Contents and Special Instructions if present
         try:
             project_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -1986,48 +1430,18 @@ def organize_files_by_section(cover_page, templates, maintenance_docs, job_files
             else:
                 remaining_maintenance.append(p)
 
-    if pools_data:
-        # Per-pool organization: each pool gets its own section with templates and gutter care
-        for pool in pools_data:
-            pool_id = pool['pool_id']
-            pool_name = pool['pool_name']
-            pool_templates_list = (pool_templates or {}).get(pool_id, [])
-            pool_gutters = (pool_gutter_care or {}).get(pool_id, [])
-
-            if pool_templates_list or pool_gutters:
-                pool_header = create_section_header(f"Pool: {pool_name}")
-                organized_files.append(pool_header)
-                logger.info(f"Added pool header: Pool: {pool_name}")
-
-            if pool_templates_list:
-                template_header = create_section_header("Equipment Templates")
-                organized_files.append(template_header)
-                logger.info(f"Added equipment templates header for pool {pool_name}")
-                for i, template in enumerate(pool_templates_list):
-                    organized_files.append(template)
-                    logger.info(f"  {i+1}. Added pool template: {os.path.basename(template)}")
-
-            if pool_gutters:
-                gutter_header = create_section_header("Gutter Care")
-                organized_files.append(gutter_header)
-                logger.info(f"Added gutter care header for pool {pool_name}")
-                for gutter_doc in pool_gutters:
-                    organized_files.append(gutter_doc)
-                    logger.info(f"  Placed gutter maintenance doc for pool {pool_name}: {os.path.basename(gutter_doc)}")
-
-    if maintenance_docs:
         maintenance_header = create_section_header("Maintenance & Operation Guides")
         organized_files.append(maintenance_header)
         logger.info("Added maintenance header to organized files")
 
-        # Place all gutter care docs first in Maintenance & Operation, if present (legacy path/no pools)
-        if gutter_care_docs and not pools_data:
+        # Place all gutter care docs first in Maintenance & Operation, if present
+        if gutter_care_docs:
             for gutter_doc in gutter_care_docs:
                 organized_files.append(gutter_doc)
                 logger.info(f"Placed gutter maintenance doc: {os.path.basename(gutter_doc)}")
 
-    # Add Equipment Templates section immediately after the primary gutter doc (legacy path/no pools)
-    if templates and not pools_data:
+    # Add Equipment Templates section immediately after the primary gutter doc
+    if templates:
         template_header = create_section_header("Equipment Templates")
         organized_files.append(template_header)
         logger.info("Added template header to organized files")
@@ -2041,22 +1455,24 @@ def organize_files_by_section(cover_page, templates, maintenance_docs, job_files
         organized_files.extend(remaining_maintenance)
         logger.info(f"Added {len(remaining_maintenance)} remaining maintenance docs after templates")
 
-    # Always include docs from always_include folder before Project Documentation
-    if always_include_dir and os.path.isdir(always_include_dir):
-        for ai in sorted(os.listdir(always_include_dir)):
-            if ai.lower().endswith('.pdf'):
-                ai_path = os.path.join(always_include_dir, ai)
-                organized_files.append(ai_path)
-                logger.info(f"Inserted always-include doc before project docs: {ai}")
+    # Always include additional_info.pdf after Maintenance section and before Project Documentation
+    try:
+        project_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        maint_dir = os.path.join(project_dir, "maintenance_docs")
+        additional_info_path = os.path.join(maint_dir, "additional_info.pdf")
+        if os.path.exists(additional_info_path) and additional_info_path.lower().endswith('.pdf'):
+            organized_files.append(additional_info_path)
+            logger.info("Inserted always-include doc before project docs: additional_info.pdf")
+        else:
+            logger.warning(f"Always-include doc missing or invalid: {additional_info_path}")
+    except Exception as e:
+        logger.error(f"Error inserting additional_info.pdf: {e}")
     
     # Add Project Documentation section
-    if equipment_list or job_files:
+    if job_files:
         project_header = create_section_header("Project Documentation")
         organized_files.append(project_header)
         logger.info(f"Added project header to organized files")
-        if equipment_list:
-            organized_files.append(equipment_list)
-            logger.info(f"Added equipment list: {os.path.basename(equipment_list)}")
         organized_files.extend(job_files)
         logger.info(f"Added {len(job_files)} job files to organized files")
     
@@ -2098,14 +1514,7 @@ def merge_pdfs(input_paths, output_path, organized=False, sections=None):
             sections.get('templates', []),
             sections.get('maintenance', []),
             sections.get('job_files', []),
-            sections.get('warranty', []),
-            sections.get('pools_data'),
-            sections.get('pool_templates'),
-            sections.get('pool_maintenance'),
-            sections.get('pool_gutter_care'),
-            sections.get('equipment_list'),
-            sections.get('cover_sheets'),
-            sections.get('always_include')
+            sections.get('warranty', [])
         )
         logger.info(f"Organized files into sections with headers, total files: {len(input_paths)}")
     
