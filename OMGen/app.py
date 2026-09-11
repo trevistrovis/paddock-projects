@@ -242,16 +242,12 @@ def index():
         else:
             logger.info("No pool separators detected in sales order; using form pools")
 
-        # Also look for keywords in the uploaded job folder PDFs
-        logger.info("Processing job folder PDFs for additional keywords...")
+        # The sales order is the authoritative source of equipment keywords.
+        # We intentionally do NOT scan the uploaded job-folder PDF contents for
+        # keywords, because drawings/cutsheets often mention unrelated equipment
+        # (e.g. "Bulkhead" in a general note or title block) and pull unwanted
+        # maintenance or warranty documents.
         additional_keywords = []
-        for pdf_path in job_folder_paths:
-            try:
-                kws = extract_items_from_sales_order(pdf_path)
-                logger.info(f"Keywords from {os.path.basename(pdf_path)}: {kws}")
-                additional_keywords.extend(kws)
-            except Exception as e:
-                logger.error(f"Error processing {pdf_path}: {str(e)}")
 
         # Build per-pool and global keyword lists
         if use_parsed_pools:

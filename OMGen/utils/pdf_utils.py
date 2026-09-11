@@ -16,7 +16,7 @@ EQUIPMENT_TERMS = {
     "filter": ["filter", "filtration", "filtering", "horizontal filter", "vertical filter", "sand filter", "cartridge filter", "diatomaceous filter", "DE filter"],
     "grate": ["grate", "grating", "floor grating", "gutter grating", "deck grate", "pool grate"],
     "platform": ["platform", "walkway", "catwalk", "mezzanine", "starting platform", "starting block"],
-    "bulkhead": ["bulkhead", "partition", "wall panel", "bulkhead door"],
+    "bulkhead": ["bulkhead", "bulkhead door"],
     "pump": ["pump", "pumping", "circulation", "circulation pump", "variable speed pump", "vs pump"],
     "tank": ["tank", "vessel", "container", "fiberglass tank", "fiberglass vessel", "fiberglass container", "surge tank"],
     "valve": ["valve", "control valve", "check valve", "butterfly valve", "gate valve", "ball valve"],
