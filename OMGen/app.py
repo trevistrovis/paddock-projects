@@ -1,5 +1,6 @@
 from flask import Flask, render_template, request, send_file, jsonify
 import os
+import re
 import tempfile
 import zipfile
 import shutil
@@ -9,6 +10,7 @@ from utils.pdf_utils import (
     generate_cover_page,
     extract_items_from_sales_order,
     extract_pools_from_sales_order,
+    extract_job_number_from_sales_order,
     sort_files_by_keyword_order,
     match_templates,
     merge_pdfs,
@@ -208,6 +210,7 @@ def index():
             ot_path = None
 
         job_folder_paths = []
+        job_file_dirs = {}
         for f in job_folder:
 
             if '/void/' in f.filename.lower() or '\\void\\' in f.filename.lower():
@@ -216,15 +219,30 @@ def index():
 
             if f.filename.lower().endswith('.pdf'):
                 logger.info(f"Processing job folder PDF: {f.filename}")
-                # Extract the relative path to maintain folder structure
-                relative_path = secure_filename(f.filename)
-                full_path = os.path.join(req_upload_dir, relative_path)
-                
-                # Create necessary subdirectories
-                os.makedirs(os.path.dirname(full_path), exist_ok=True)
-                
+                # Save under the file's own basename. Folder uploads arrive as
+                # relative paths (e.g. "JobFolder/sub/25261.01-X.pdf"); keeping
+                # the path in the filename would break job-number drawing
+                # detection, which keys off the start of the filename.
+                rel_parts = f.filename.replace('\\', '/').split('/')
+                base_name = secure_filename(os.path.basename(f.filename.replace('\\', '/')))
+                if not base_name:
+                    logger.warning(f"Could not derive a safe filename for {f.filename}; skipping")
+                    continue
+                full_path = os.path.join(req_upload_dir, base_name)
+                # Disambiguate when the same basename appears in multiple subfolders
+                if full_path in job_folder_paths:
+                    stem, ext = os.path.splitext(base_name)
+                    n = 2
+                    while os.path.join(req_upload_dir, f"{stem}_{n}{ext}") in job_folder_paths:
+                        n += 1
+                    full_path = os.path.join(req_upload_dir, f"{stem}_{n}{ext}")
+                    logger.info(f"Duplicate basename {base_name}; saving as {os.path.basename(full_path)}")
+
                 f.save(full_path)
                 job_folder_paths.append(full_path)
+                # Remember the subfolders this file was uploaded inside of so
+                # cut sheets can be grouped under pool headers later.
+                job_file_dirs[full_path] = rel_parts[:-1]
             else:
                 logger.warning(f"Skipping non-PDF file in job folder: {f.filename}")
 
@@ -342,7 +360,18 @@ def index():
                         perimeter_index = i
                         break
 
-                if perimeter_path:
+                # Fallback: user supplied a gutter drawing number, but the sales
+                # order didn’t pull the gutter doc. Grab it directly from the
+                # maintenance docs folder and append it after any already-pulled
+                # maintenance documents.
+                if not perimeter_path and gutters_data:
+                    fallback_path = os.path.join(MAINTENANCE_DOCS, perimeter_base)
+                    if os.path.exists(fallback_path):
+                        perimeter_path = fallback_path
+                        perimeter_index = None
+                        logger.info(f"Sales order did not pull {perimeter_base}; using it from maintenance docs")
+
+                if perimeter_path and gutters_data:
                     filled_perimeter = []
                     for gutter in gutters_data:
                         if gutter.get('drawing_number'):
@@ -354,8 +383,28 @@ def index():
                                 filled_perimeter.append(filled_gutter_doc)
                                 logger.info(f"Filled {perimeter_base} for {gutter['gutter_name']}")
 
-                    if filled_perimeter and perimeter_index is not None:
-                        maintenance_docs = maintenance_docs[:perimeter_index] + filled_perimeter + maintenance_docs[perimeter_index + 1:]
+                    if filled_perimeter:
+                        if perimeter_index is not None:
+                            maintenance_docs = maintenance_docs[:perimeter_index] + filled_perimeter + maintenance_docs[perimeter_index + 1:]
+                        else:
+                            maintenance_docs = maintenance_docs + filled_perimeter
+
+                        # Keep per-pool lists in sync: when the sales order was
+                        # parsed into pools, the flat maintenance_docs list is
+                        # ignored and sections are built from pool_maintenance,
+                        # which still holds the original unfilled doc.
+                        replaced_in_pool = False
+                        for pid, pm_list in pool_maintenance.items():
+                            new_list = []
+                            for p in pm_list:
+                                if os.path.basename(p).lower() == perimeter_base.lower():
+                                    new_list.extend(filled_perimeter)
+                                    replaced_in_pool = True
+                                else:
+                                    new_list.append(p)
+                            pool_maintenance[pid] = new_list
+                        if not replaced_in_pool:
+                            pool_maintenance.setdefault(default_pool_id, []).extend(filled_perimeter)
             except Exception as e:
                 logger.error(f"Error preparing gutter maintenance docs: {e}")
 
@@ -504,8 +553,70 @@ def index():
                 continue
             filtered_job_files.append(p)
 
-        # Update sections with filtered job files
-        sections['job_files'] = filtered_job_files
+        # Split job folder uploads into drawings and cut sheets. Drawings are
+        # named "<job number>.<suffix>-<equipment name>" (e.g.
+        # "25261.01-Gutter Layout.pdf"); the job number is extracted from the
+        # sales order. Everything else is a cut sheet. Drawings go under
+        # Warranty & Drawings, cut sheets go under the Equipment List section.
+        job_number = extract_job_number_from_sales_order(so_path)
+        if not job_number:
+            # Fallback: first 4-6 digit number found in the Job Name field.
+            m = re.search(r'\b(\d{4,6})\b', job_name)
+            if m:
+                job_number = m.group(1)
+                logger.info(f"Job number not found in sales order; using number from job name: {job_number}")
+
+        if job_number:
+            logger.info(f"Identifying drawings by job number prefix: {job_number}")
+            job_pattern = re.compile(
+                rf'^{re.escape(job_number)}(?:\.\d+)?(?:[-_ ].*)?$',
+                re.IGNORECASE
+            )
+        else:
+            job_pattern = None
+            logger.warning("No job number available; all job-folder files will be treated as cut sheets")
+
+        drawing_files = []
+        cutsheet_files = []
+        for p in filtered_job_files:
+            stem = os.path.splitext(os.path.basename(p))[0]
+            if job_pattern and job_pattern.match(stem):
+                drawing_files.append(p)
+            else:
+                cutsheet_files.append(p)
+
+        # Map each cut sheet to a pool via the subfolder it was uploaded in
+        # (e.g. "JobFolder/Family Pool/regen.pdf" -> Family Pool). Folder names
+        # are matched to pool names case-insensitively, allowing partial names
+        # like a "Family" folder matching the "Family Pool" separator.
+        def _norm_name(s):
+            return re.sub(r'\s+', ' ', re.sub(r'[^a-z0-9\s]', ' ', s.lower())).strip()
+
+        pool_name_by_id = {p['pool_id']: p['pool_name'] for p in pools_data}
+        pool_names_norm = {pid: _norm_name(n) for pid, n in pool_name_by_id.items()}
+        cutsheet_pool_map = {}
+        for p in cutsheet_files:
+            for d in reversed(job_file_dirs.get(p, [])):
+                d_norm = _norm_name(d)
+                if not d_norm:
+                    continue
+                d_words = set(d_norm.split())
+                match = None
+                for pid, pname in pool_names_norm.items():
+                    p_words = set(pname.split())
+                    if d_norm == pname or d_words <= p_words or p_words <= d_words:
+                        match = pid
+                        break
+                if match:
+                    cutsheet_pool_map[p] = match
+                    logger.info(f"Cut sheet {os.path.basename(p)} assigned to pool "
+                                f"'{pool_name_by_id[match]}' via folder '{d}'")
+                    break
+
+        # Update sections
+        sections['job_files'] = drawing_files
+        sections['cutsheets'] = cutsheet_files
+        sections['cutsheet_pools'] = cutsheet_pool_map
 
         # For backward compatibility, keep a list of all PDFs
         all_pdfs = [cover_pdf_path] + templates + maintenance_docs + ([equipment_list_pdf] if equipment_list_pdf else []) + filtered_job_files + warranty_docs
@@ -513,7 +624,7 @@ def index():
         logger.info(f"Templates count: {len(templates)}")
         logger.info(f"Maintenance docs count: {len(maintenance_docs)}")
         logger.info(f"Warranty docs count: {len(warranty_docs)}")
-        logger.info(f"Job files count: {len(filtered_job_files)} (filtered out {len(job_folder_paths) - len(filtered_job_files)} template-like files)")
+        logger.info(f"Drawings count: {len(drawing_files)}, Cut sheets count: {len(cutsheet_files)} (filtered out {len(job_folder_paths) - len(filtered_job_files)} template-like files)")
         
         success, message, skipped_files = merge_pdfs(all_pdfs, output_pdf_path, organized=True, sections=sections)
         

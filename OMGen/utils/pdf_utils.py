@@ -31,7 +31,8 @@ EQUIPMENT_TERMS = {
     "chlorinator": ["chlorinator", "salt chlorinator", "salt cell", "chlorine generator"],
     "light": ["light", "lighting", "led light", "pool light", "underwater light"],
     "skimmer": ["skimmer", "surface skimmer", "automatic skimmer"],
-    "drain": ["drain", "floor drain", "bottom drain", "drain cover"]
+    "drain": ["drain", "floor drain", "bottom drain", "drain cover"],
+    "rail": ["rail", "hand rail", "handrail", "cali rail", "california rail"]
 }
 
 # Model number patterns (more flexible)
@@ -41,6 +42,65 @@ MODEL_PATTERNS = [
     r'VSC\d+',    # VSC model numbers
     r'[A-Z]{2,4}\d{3,4}[A-Z]?',  # General model pattern (letters + numbers + optional letter)
 ]
+
+# Shared/general maintenance keys that should only be used when no more-specific
+# key matches (e.g. generic "filter" notes vs a Vacsand/Compak-specific manual).
+GENERIC_MAINTENANCE_KEYS = {"filter"}
+
+# Words that identify a specific product variant in a maintenance mapping key.
+# Keys containing these outrank generic configuration keys — e.g. "horizontal
+# stacked" beats "horizontal manual linkage" for a stacked filter description.
+VARIANT_TERMS = {"stack", "cell", "face"}
+
+# Equivalent word forms collapsed before matching, so e.g. "stack
+# configuration" matches a "stacked" key, "2-Cell"/"2C" matches a
+# "2 cell" key, and "manual valves" matches a "manual valve" key.
+WORD_EQUIVALENTS = {
+    "stacked": "stack",
+    "stacking": "stack",
+    "stacks": "stack",
+    "2c": "2 cell",
+    "3c": "3 cell",
+    "two": "2",
+    "three": "3",
+    "four": "4",
+    "valves": "valve",
+    "linkages": "linkage",
+    "vertical": "verticel",
+    "regenerator": "regen",
+    "regenerative": "regen",
+    "regeneration": "regen",
+    "without": "no",
+}
+
+
+def _match_word_set(text):
+    """Normalized word set for matching, with equivalent forms collapsed.
+
+    Equivalence values may expand to multiple words (e.g. "2c" -> "2 cell").
+    """
+    words = set()
+    for w in _normalize_equipment_text(text).split():
+        words.update(WORD_EQUIVALENTS.get(w, w).split())
+    return words
+
+
+def _normalize_equipment_text(text):
+    """
+    Normalize an equipment description for matching:
+    - split camelCase/PascalCase boundaries (e.g. "MainDrain" -> "Main Drain")
+    - replace punctuation/non-alphanumerics with spaces
+    - lowercase and collapse whitespace
+    Returns a cleaned string; caller splits into words as needed.
+    """
+    if not text:
+        return ""
+    # Split camelCase / PascalCase boundaries
+    text = re.sub(r'(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])', ' ', text)
+    # Replace any non-alphanumeric runs with a single space
+    text = re.sub(r'[^a-zA-Z0-9]+', ' ', text)
+    return text.lower().strip()
+
 
 # Known pool/section labels used as sales-order separators.
 # Keep them specific to avoid matching equipment descriptions that happen to contain "pool".
@@ -57,7 +117,7 @@ def _extract_keywords_from_lines(lines):
     keywords = []
     seen = set()
 
-    for line in lines:
+    for idx, line in enumerate(lines):
         line_lower = line.lower().strip()
         if not line_lower:
             continue
@@ -103,6 +163,34 @@ def _extract_keywords_from_lines(lines):
                         seen.add(part)
                         logger.debug(f"Found model number pattern: {part}")
 
+        # Comma-splitting can separate variant words from the equipment name
+        # (e.g. "Horizontal FiberGlass 36-20 - Air Relief, Gauges, Full Face
+        # Piping with Manual control Valves and Media"). Also evaluate the
+        # whole line as one keyword so variant docs can still match.
+        if len(parts) > 1:
+            for category, variations in EQUIPMENT_TERMS.items():
+                if any(term in line_lower for term in variations):
+                    cleaned_line = clean_product_line(line_lower)
+                    if cleaned_line and cleaned_line not in seen:
+                        keywords.append(cleaned_line)
+                        seen.add(cleaned_line)
+                        logger.debug(f"Found whole-line keyword in category '{category}': {cleaned_line}")
+                    break
+
+        # Descriptions wrap across text lines, so variant words ("stack
+        # configuration", "manual linkage") can trail the item line. Also
+        # evaluate this line joined with the next two lines.
+        window = ' '.join(l.strip() for l in lines[idx:idx + 3]).lower()
+        if window != line_lower:
+            for category, variations in EQUIPMENT_TERMS.items():
+                if any(term in window for term in variations):
+                    cleaned_window = clean_product_line(window)
+                    if cleaned_window and cleaned_window not in seen:
+                        keywords.append(cleaned_window)
+                        seen.add(cleaned_window)
+                        logger.debug(f"Found window keyword in category '{category}': {cleaned_window}")
+                    break
+
     return keywords
 
 
@@ -115,6 +203,38 @@ def _identify_pool_header(line, pool_labels=None):
     for label in labels:
         if norm == label:
             return label.title()
+
+    # "Miscellaneous Miscellaneous -- <pool name> --" separators used on
+    # multi-pool sales orders (dashes are stripped during normalization).
+    # Requires the double "Miscellaneous" column text; unanchored so table
+    # columns (row numbers etc.) may precede it. Pool names are short, so a
+    # long tail means this is an item row, not a separator.
+    m = re.search(r'miscellaneous\s+miscellaneous\s+(.+)$', norm)
+    if m:
+        tail = re.sub(r'\s+', ' ', m.group(1)).strip()
+        # Drop trailing price/number column tokens ("family pool 150.00 2")
+        tail = re.sub(r'(\s+[\d,.$]+)+$', '', tail).strip()
+        # Strip any further Miscellaneous column text ahead of the name;
+        # an empty result means there was no name after the columns
+        tail = re.sub(r'^(miscellaneous\s*)+', '', tail).strip()
+        if tail and len(tail.split()) <= 6:
+            name = tail.title()
+            for small in (' And ', ' Of ', ' The '):
+                name = name.replace(small, small.lower())
+            return name
+
+    # Bare "---NAME---" separator rows: column-major text extraction can put
+    # the pool name on its own line with no Miscellaneous prefix.
+    m = re.match(r'^\s*-{2,}\s*(.+?)\s*-{2,}\s*$', line.strip())
+    if m:
+        tail = re.sub(r'\s+', ' ', m.group(1)).strip()
+        bad = ('total', 'page', 'continued', 'end', 'note', 'miscellaneous')
+        if tail and re.search(r'[a-zA-Z]', tail) and len(tail.split()) <= 6 \
+                and not any(b in tail.lower() for b in bad):
+            name = tail.title()
+            for small in (' And ', ' Of ', ' The '):
+                name = name.replace(small, small.lower())
+            return name
 
     # "Pool 1 - Main Pool", "Pool #2 Main Pool", "Pool 2: Spa", etc.
     m = re.match(r'^pool\s*#?\s*(\d+)\s*[-:\u2013\u2014]\s*(.+)$', norm)
@@ -186,17 +306,42 @@ def extract_pools_from_sales_order(pdf_path, pool_labels=None):
     groups = [default_group]
     current = default_group
 
-    for line in all_lines:
+    i = 0
+    while i < len(all_lines):
+        line = all_lines[i]
         pool_name = _identify_pool_header(line, pool_labels=pool_labels)
+        consumed = 0
+        # The "Miscellaneous Miscellaneous --" prefix can extract on its own
+        # line(s) with the pool name on a following line; try combining up to
+        # three consecutive lines.
+        if not pool_name:
+            norm = re.sub(r'[^a-z0-9\s]', ' ', line.lower()).strip()
+            if 'miscellaneous' in norm:
+                for span in (1, 2):
+                    if i + span >= len(all_lines):
+                        break
+                    combined = ' '.join(all_lines[i:i + span + 1])
+                    pool_name = _identify_pool_header(combined,
+                                                     pool_labels=pool_labels)
+                    if pool_name:
+                        consumed = span
+                        break
         if pool_name:
             new_group = {'pool_name': pool_name, 'lines': []}
             groups.append(new_group)
             current = new_group
+            i += consumed
         else:
             current['lines'].append(line)
+        i += 1
 
-    # Build results; skip the default group if it's empty and we have real headers
-    if len(groups) > 1 and not default_group['lines']:
+    # Items above the first separator (SO header, shared notes/equipment) are
+    # job-wide, not a pool of their own. Fold them into every pool's lines so
+    # their docs are treated as shared rather than under a "Default" pool.
+    if len(groups) > 1:
+        if default_group['lines']:
+            for g in groups[1:]:
+                g['lines'].extend(default_group['lines'])
         groups = groups[1:]
 
     pools_data = []
@@ -210,6 +355,39 @@ def extract_pools_from_sales_order(pdf_path, pool_labels=None):
         logger.info(f"Pool '{pool_name}' (id={pool_id}) -> {len(keywords)} keywords")
 
     return pools_data, pool_keywords_map
+
+
+def extract_job_number_from_sales_order(pdf_path):
+    """
+    Extract the job number from a sales order PDF.
+
+    The job number appears embedded in part numbers (e.g. ``25261-ADA-HR10``)
+    and in leading drawing tokens (e.g. ``25261.01 R300-316-TGEC-W``). It is
+    taken to be the most frequently occurring 4-6 digit prefix followed by a
+    '-' or '.' separator.
+
+    Returns the job number string (e.g. "25261") or None.
+    """
+    counts = {}
+    try:
+        doc = fitz.open(pdf_path)
+        for page in doc:
+            for m in re.finditer(r'\b(\d{4,6})(?=[-.][A-Za-z0-9])', page.get_text()):
+                num = m.group(1)
+                counts[num] = counts.get(num, 0) + 1
+        doc.close()
+    except Exception as e:
+        logger.error(f"Error extracting job number from sales order {pdf_path}: {e}")
+        return None
+
+    if not counts:
+        logger.warning(f"No job number found in sales order: {pdf_path}")
+        return None
+
+    job_number = max(counts.items(), key=lambda kv: kv[1])[0]
+    logger.info(f"Extracted job number '{job_number}' from sales order (counts: {counts})")
+    return job_number
+
 
 def clean_product_line(line):
     """Clean up a product line by removing common prefixes, suffixes, and numbers."""
@@ -282,6 +460,9 @@ def get_associated_documents(equipment_type, template_dir):
         "horizontal manual linkage": [
             "Horizontal Manual Linkage.pdf",
         ],
+        "horizontal linkage": [
+            "Horizontal Manual Linkage.pdf",
+        ],
         "horizontal manual valves": [
             "Horizontal Manual Valves.pdf",
         ],
@@ -301,6 +482,9 @@ def get_associated_documents(equipment_type, template_dir):
         "2c verticel manual linkage": [
             "2C Verticel Manual Linkage.pdf",
         ],
+        "2c verticel linkage": [
+            "2C Verticel Manual Linkage.pdf",
+        ],
         "2c verticel manual valves": [
             "2C Verticel Manual Valves.pdf",
         ],
@@ -316,12 +500,21 @@ def get_associated_documents(equipment_type, template_dir):
         "vacsand": [
             "Vacuum Sand Filter Winterizing & Trouble Shooting.pdf",
         ],
+        "vacuum sand": [
+            "Vacuum Sand Filter Winterizing & Trouble Shooting.pdf",
+        ],
+        "vacsand compak": [
+            "Vacsand Compak Manual with Air Scour-Evacuator 2026.pdf",
+        ],
         # ── Compak ─────────────────────────────────────────────────────
         "compak": [
-            "Compak Manual VSC with Air Scour-Evacuator 2026.pdf",
+            "Vacsand Compak Manual with Air Scour-Evacuator 2026.pdf",
         ],
         # ── High Flow variants ─────────────────────────────────────────
         "high flow 4 manual valve": [
+            "High Flow With 4 Manual Valve 2026.pdf",
+        ],
+        "high flow manual valve": [
             "High Flow With 4 Manual Valve 2026.pdf",
         ],
         "high flow linkage": [
@@ -333,7 +526,7 @@ def get_associated_documents(equipment_type, template_dir):
         ],
         # ── Main Drain ─────────────────────────────────────────────────
         "main drain": [
-            "Paddock IAPMO R&T Main Drain Manual rev 05-2024r1.pdf",
+            "Main Drain Paddock IAPMO R&T Manual rev 05-2024r1.pdf",
         ],
         # ── Evacuator ──────────────────────────────────────────────────
         "evacuator": [
@@ -351,42 +544,73 @@ def get_associated_documents(equipment_type, template_dir):
 
     logger.info(f"Checking equipment type: {equipment_type}")
     associated_docs = []
-    eq_lower = equipment_type.lower().strip()
+    eq_text = _normalize_equipment_text(equipment_type)
+    eq_words = _match_word_set(equipment_type)
 
-    # Find the LONGEST mapping key whose words ALL appear in the equipment_type.
-    # This ensures "horizontal 2 cell linkage" wins over "horizontal", while
-    # still matching when extra words appear (e.g. "high flow with linkage valves"
-    # matches key "high flow linkage").
-    eq_words = set(eq_lower.split())
-    best_key = None
-    best_len = 0
+    if not eq_words:
+        logger.warning(f"No equipment words to match for: {equipment_type}")
+        return []
+
+    # Find all mapping keys whose words ALL appear in the equipment_type.
+    # Prefer specific (non-generic) keys; only fall back to shared generic keys
+    # (e.g. "filter") when no specific variant matches.
+    matching_keys = set()
     for key in maintenance_mappings:
-        key_words = set(key.split())
-        if key_words.issubset(eq_words) and len(key) > best_len:
-            best_key = key
-            best_len = len(key)
+        key_words = _match_word_set(key)
+        if key_words and key_words.issubset(eq_words):
+            matching_keys.add(key)
 
-    if best_key:
-        logger.info(f"Best mapping key for '{equipment_type}': '{best_key}'")
-        doc_list = maintenance_mappings[best_key]
+    # Fallback: if a key like "main drain" appears concatenated in the input
+    # (e.g. "maindrain"), still treat it as a match.
+    if not matching_keys:
+        eq_no_space = re.sub(r'[^a-z0-9]', '', eq_text)
+        for key in maintenance_mappings:
+            key_no_space = re.sub(r'[^a-z0-9]', '', _normalize_equipment_text(key))
+            if key_no_space and key_no_space in eq_no_space:
+                matching_keys.add(key)
+
+    specific_keys = [k for k in matching_keys if k not in GENERIC_MAINTENANCE_KEYS]
+    generic_keys = [k for k in matching_keys if k in GENERIC_MAINTENANCE_KEYS]
+
+    if specific_keys:
+        # Rank by (has variant term, word count): a product-variant key like
+        # "horizontal stacked" beats a valve-config key like "horizontal
+        # manual linkage" even though it's shorter — the stacked manual is
+        # the correct doc for a stacked filter regardless of valve phrasing.
+        # Among same-tier keys the most words wins ("2 cell manual" beats
+        # "manual valves" for a 2-cell description).
+        def _key_rank(k):
+            words = _match_word_set(k)
+            return (bool(words & VARIANT_TERMS), len(words))
+        max_rank = max(_key_rank(k) for k in specific_keys)
+        selected_keys = [k for k in specific_keys if _key_rank(k) == max_rank]
+        logger.info(f"Specific maintenance mapping keys for '{equipment_type}': {selected_keys}")
+    elif generic_keys:
+        logger.info(f"Generic maintenance mapping keys for '{equipment_type}': {generic_keys}")
+        selected_keys = sorted(generic_keys, key=lambda k: len(k), reverse=True)
     else:
-        doc_list = []
+        logger.info(f"No maintenance mapping keys matched for '{equipment_type}'")
+        selected_keys = []
 
-    logger.info(f"Looking for {len(doc_list)} mapped maintenance docs")
-    for doc in doc_list:
-        if doc in available_docs:
-            full_path = os.path.join(maintenance_docs_dir, doc)
-            associated_docs.append(full_path)
-            logger.info(f"Found maintenance doc: {doc}")
-        else:
-            doc_lower = doc.lower()
-            matches = [f for f in available_docs if f.lower() == doc_lower]
-            if matches:
-                full_path = os.path.join(maintenance_docs_dir, matches[0])
+    seen_docs = set()
+    for key in selected_keys:
+        for doc in maintenance_mappings[key]:
+            if doc in seen_docs:
+                continue
+            seen_docs.add(doc)
+            if doc in available_docs:
+                full_path = os.path.join(maintenance_docs_dir, doc)
                 associated_docs.append(full_path)
-                logger.info(f"Found maintenance doc (case-insensitive): {matches[0]}")
+                logger.info(f"Found maintenance doc for key '{key}': {doc}")
             else:
-                logger.warning(f"Maintenance document not found: {doc}")
+                doc_lower = doc.lower()
+                matches = [f for f in available_docs if f.lower() == doc_lower]
+                if matches:
+                    full_path = os.path.join(maintenance_docs_dir, matches[0])
+                    associated_docs.append(full_path)
+                    logger.info(f"Found maintenance doc (case-insensitive) for key '{key}': {matches[0]}")
+                else:
+                    logger.warning(f"Maintenance document not found for key '{key}': {doc}")
 
     # Exact-name fallback: if the equipment_type closely matches a filename
     # on disk (e.g. "2C Verticel Manual Linkage" -> "2C Verticel Manual Linkage.pdf"),
@@ -434,6 +658,9 @@ def parse_cover_sheets(cover_sheets_dir):
     for f in sorted(os.listdir(cover_sheets_dir)):
         if not f.lower().endswith('.pdf'):
             continue
+        # Reference/example files are never real cover sheets
+        if 'example' in f.lower():
+            continue
         full_path = os.path.join(cover_sheets_dir, f)
         m = re.match(r'^(\d+)', f)
         if m:
@@ -472,15 +699,33 @@ def parse_cover_sheets(cover_sheets_dir):
     # Suppress alternate "cover page" files so only the chosen main cover is used as a cover
     other_unnumbered = [p for p in other_unnumbered if 'cover page' not in os.path.basename(p).lower()]
 
+    # Pull out the optional Equipment List cover sheet (unnumbered filename
+    # containing "equipment list") so it can be placed right before the
+    # Warranty & Drawings section.
+    equipment_list_cover = None
+    el_candidates = [p for p in other_unnumbered
+                     if 'equipment list' in os.path.basename(p).lower()]
+    # Prefer the exact "Equipment List.pdf" filename over lookalikes
+    for p in el_candidates:
+        if os.path.splitext(os.path.basename(p))[0].lower().strip() == 'equipment list':
+            equipment_list_cover = p
+            break
+    if equipment_list_cover is None and el_candidates:
+        equipment_list_cover = el_candidates[0]
+    if equipment_list_cover is not None:
+        other_unnumbered.remove(equipment_list_cover)
+
     logger.info(
         f"Parsed cover sheets in {cover_sheets_dir}: "
         f"main_cover={os.path.basename(main_cover) if main_cover else None}, "
         f"attention_page={os.path.basename(attention_page) if attention_page else None}, "
+        f"equipment_list_cover={os.path.basename(equipment_list_cover) if equipment_list_cover else None}, "
         f"numbered={len(numbered)}, other_unnumbered={len(other_unnumbered)}"
     )
     return {
         'main_cover': main_cover,
         'attention_page': attention_page,
+        'equipment_list_cover': equipment_list_cover,
         'other_unnumbered': other_unnumbered,
         'numbered_covers': numbered
     }
@@ -495,10 +740,11 @@ def _basename_matches_keywords(path, keywords):
 
 
 def _organize_with_cover_sheets(cover_page, cover_info, templates, maintenance_docs,
-                                job_files, warranty_docs=None, equipment_list=None,
-                                pools_data=None, pool_templates=None,
-                                pool_maintenance=None, pool_gutter_care=None,
-                                always_include_dir=None):
+                                job_files, cutsheet_files=None, warranty_docs=None,
+                                equipment_list=None, pools_data=None,
+                                pool_templates=None, pool_maintenance=None,
+                                pool_gutter_care=None, always_include_dir=None,
+                                cutsheet_pool_map=None):
     """
     Build the manual using the cover_sheets folder structure:
       cover_page -> attention page -> unnumbered covers -> numbered section covers
@@ -605,7 +851,11 @@ def _organize_with_cover_sheets(cover_page, cover_info, templates, maintenance_d
     # Keywords that decide which section a document belongs under
     section_keywords = {
         2: ['perimeter', 'overflow', 'recirculation', 'gutter'],
-        3: ['filter'],
+        # Filter-family product names — the variant docs (e.g. "Horizontal
+        # Manual Valves.pdf", "2C Verticel ...") don't contain the word
+        # "filter", so the product names must be matched explicitly.
+        3: ['filter', 'horizontal', 'verticel', 'high flow', 'linkage',
+            'vacsand', 'compak', 'regen', 'regenerator', 'vacuum sand'],
     }
 
     assigned_templates = set()
@@ -672,6 +922,34 @@ def _organize_with_cover_sheets(cover_page, cover_info, templates, maintenance_d
             used_set.add(item)
             logger.info(f"Placed remaining {item_label} in section 4: {os.path.basename(item)}")
 
+    def _emit_cutsheets_grouped(items):
+        """Emit cut sheets grouped by their uploaded pool subfolder.
+
+        Files that sat in a pool-named subfolder get a "Pool: <name>" header;
+        files at the upload root (or unmatched folders) are job-wide and emit
+        first, unlabeled.
+        """
+        by_pool = {pid: [] for pid in pool_names}
+        unmatched = []
+        for item in items:
+            pid = (cutsheet_pool_map or {}).get(item)
+            if multi_pool and pid:
+                by_pool.setdefault(pid, []).append(item)
+            else:
+                unmatched.append(item)
+
+        for item in unmatched:
+            organized_files.append(item)
+            logger.info(f"  Cut sheet (shared): {os.path.basename(item)}")
+
+        for pool in (pools_data or []):
+            pid = pool['pool_id']
+            if by_pool.get(pid):
+                organized_files.append(create_section_header(f"Pool: {pool_names[pid]}"))
+                for item in by_pool[pid]:
+                    organized_files.append(item)
+                    logger.info(f"  Cut sheet for pool {pool_names[pid]}: {os.path.basename(item)}")
+
     numbered = sorted(cover_info.get('numbered_covers', []), key=lambda x: x[0])
 
     for num, cover_path in numbered:
@@ -682,6 +960,19 @@ def _organize_with_cover_sheets(cover_page, cover_info, templates, maintenance_d
                     ai_path = os.path.join(always_include_dir, ai)
                     organized_files.append(ai_path)
                     logger.info(f"Inserted always-include doc before warranty section: {ai}")
+
+        # Insert the optional Equipment List cover right before the
+        # Warranty & Drawings cover, and put the equipment list plus all
+        # uploaded cut sheets under it.
+        if num == 5 and cover_info.get('equipment_list_cover') and (equipment_list or cutsheet_files):
+            organized_files.append(cover_info['equipment_list_cover'])
+            logger.info(f"Added equipment list cover: {os.path.basename(cover_info['equipment_list_cover'])}")
+            if equipment_list:
+                organized_files.append(equipment_list)
+                logger.info(f"Added equipment list: {os.path.basename(equipment_list)}")
+            if cutsheet_files:
+                _emit_cutsheets_grouped(cutsheet_files)
+                logger.info(f"Added {len(cutsheet_files)} cut sheets under Equipment List")
 
         organized_files.append(cover_path)
         logger.info(f"Added numbered section cover ({num}): {os.path.basename(cover_path)}")
@@ -696,28 +987,35 @@ def _organize_with_cover_sheets(cover_page, cover_info, templates, maintenance_d
             _emit_remaining(all_maintenance, maintenance_pool_map, assigned_maintenance, "maintenance doc")
 
         elif num == 5:
-            # Section 5: Warranty & Drawings -- project docs and warranty docs
-            if equipment_list:
-                organized_files.append(equipment_list)
-                logger.info(f"Added equipment list: {os.path.basename(equipment_list)}")
+            # Section 5: Warranty & Drawings -- drawings and warranty docs
             if job_files:
                 organized_files.extend(job_files)
-                logger.info(f"Added {len(job_files)} job files under warranty/drawings section")
+                logger.info(f"Added {len(job_files)} drawings under warranty/drawings section")
             if warranty_docs:
                 organized_files.extend(warranty_docs)
                 logger.info(f"Added {len(warranty_docs)} warranty docs under warranty/drawings section")
 
     # If no #5 numbered cover exists, fall back to legacy project/warranty sections
     if not any(num == 5 for num, _ in numbered):
-        if equipment_list or job_files:
+        if equipment_list or job_files or cutsheet_files:
+            if cover_info.get('equipment_list_cover'):
+                organized_files.append(cover_info['equipment_list_cover'])
+                logger.info(f"Added equipment list cover: {os.path.basename(cover_info['equipment_list_cover'])}")
+                if equipment_list:
+                    organized_files.append(equipment_list)
+                    logger.info(f"Added equipment list: {os.path.basename(equipment_list)}")
+                if cutsheet_files:
+                    _emit_cutsheets_grouped(cutsheet_files)
+                    logger.info(f"Added {len(cutsheet_files)} cut sheets under Equipment List")
+            else:
+                if equipment_list:
+                    organized_files.append(equipment_list)
+                    logger.info(f"Added equipment list: {os.path.basename(equipment_list)}")
             project_header = create_section_header("Project Documentation")
             organized_files.append(project_header)
             logger.info("Added project documentation header to organized files")
-            if equipment_list:
-                organized_files.append(equipment_list)
-                logger.info(f"Added equipment list: {os.path.basename(equipment_list)}")
             organized_files.extend(job_files or [])
-            logger.info(f"Added {len(job_files or [])} job files to organized files")
+            logger.info(f"Added {len(job_files or [])} drawings to organized files")
 
         if warranty_docs:
             warranty_header = create_section_header("Warranty Documents")
@@ -796,8 +1094,8 @@ def find_warranty_documents(keywords):
            any("compak" in k for k in norm_kws):
             detected_categories.add("vacuum sand filter")
             detected_categories.add("compak")
-        if any("verticel" in k and "filter" in k for k in norm_kws) or \
-           any("verticel sand" in k for k in norm_kws):
+        if any(("verticel" in k or "vertical" in k) and "filter" in k for k in norm_kws) or \
+           any("verticel sand" in k or "vertical sand" in k for k in norm_kws):
             detected_categories.add("verticel sand filter")
         if has_regen_model or any("regenerator" in k or "regen" in k for k in norm_kws):
             detected_categories.add("regenerator")
@@ -866,8 +1164,7 @@ def find_warranty_documents(keywords):
 
         # If nothing specific detected, be conservative: return empty to avoid bloat
         if not detected_categories:
-            logger.info("No specific equipment categories detected for warranty; returning no warranty docs to avoid bloat.")
-            return []
+            logger.info("No specific equipment categories detected for warranty; equipment-specific warranty docs skipped.")
 
         # 4) Match only files whose normalized name contains one of the strict patterns
         matched_paths = []
@@ -875,6 +1172,10 @@ def find_warranty_documents(keywords):
             base_no_ext = os.path.splitext(fname)[0]
             norm_name = normalize_text(base_no_ext)
             if not norm_name:
+                continue
+
+            # Never auto-match the registration signoff forms; we place them manually at the end
+            if 'signoff' in norm_name:
                 continue
 
             include = False
@@ -892,9 +1193,24 @@ def find_warranty_documents(keywords):
             if include:
                 matched_paths.append(os.path.join(warranty_dir, fname))
 
-        # 5) Deduplicate and sort by filename for stability
+        # 5) Deduplicate and sort equipment-specific warranty docs
         result = sorted(set(matched_paths), key=lambda p: os.path.basename(p).lower())
-        logger.info(f"Total matched warranty docs (strict): {len(result)}")
+
+        # 6) If an evacuator is present, include the EVAC signoff form just before
+        # the standard signoff.
+        if "evacuator" in detected_categories:
+            evac_signoff_path = os.path.join(warranty_dir, "Warranty Regist. EVAC Signoff Form 6-2026.pdf")
+            if os.path.exists(evac_signoff_path):
+                result.append(evac_signoff_path)
+                logger.info(f"Added EVAC warranty signoff form: {os.path.basename(evac_signoff_path)}")
+
+        # 7) Append the standard warranty signoff form at the very end, always.
+        signoff_path = os.path.join(warranty_dir, "Warranty Regist. Signoff Form 6-2025.pdf")
+        if os.path.exists(signoff_path):
+            result.append(signoff_path)
+            logger.info(f"Added standard warranty signoff form: {os.path.basename(signoff_path)}")
+
+        logger.info(f"Total warranty docs: {len(result)}")
         return result
     except Exception as e:
         logger.error(f"Error searching warranty documents: {e}")
@@ -1344,6 +1660,27 @@ def validate_pdf(pdf_path):
             return True
     except Exception as e:
         return False
+
+def _classify_gutter_field_by_context(line_text):
+    """Classify which gutter field a line refers to based on keywords."""
+    t = line_text.lower()
+    # Grating "provided by others" must be checked before the generic grating check.
+    if 'provided by others' in t:
+        return 'grating_others'
+    if 'drawing number' in t or 'drawing no' in t or 'dwg' in t:
+        return 'drawing_number'
+    if 'inlet count' in t or ('inlets' in t and 'count' in t):
+        return 'inlet_count'
+    if 'inlet size' in t:
+        return 'inlet_size'
+    if 'gutter option' in t or 'gutter type' in t:
+        return 'gutter_option'
+    if 'grating' in t:
+        return 'has_grating'
+    if 'feature' in t:
+        return 'gutter_features'
+    return None
+
 
 def add_gutter_form_fields_in_pdf(pdf_path):
     """
@@ -1866,6 +2203,20 @@ def fill_pdf_form_fields(pdf_path, flow_data, filter_name=None, gutter_data=None
                     return None
 
             doc.close()
+
+            # Flatten the filled PDF so the values become static page content.
+            # Without this step, PyPDF2's merge can drop interactive form field values.
+            try:
+                flatten_doc = fitz.open(final_path)
+                flatten_doc.bake()
+                flat_path = final_path + ".flat"
+                flatten_doc.save(flat_path)
+                flatten_doc.close()
+                os.replace(flat_path, final_path)
+                logger.info(f"Flattened filled PDF: {final_path}")
+            except Exception as e:
+                logger.warning(f"Could not flatten {final_path}: {e}")
+
             return final_path
         else:
             logger.warning(f"No fields were modified in {os.path.basename(pdf_path)} for filter {filter_name}")
@@ -1904,7 +2255,12 @@ def create_section_header(title):
     c.save()
     return header_path
 
-def organize_files_by_section(cover_page, templates, maintenance_docs, job_files, warranty_docs=None, pools_data=None, pool_templates=None, pool_maintenance=None, pool_gutter_care=None, equipment_list=None, cover_sheets=None, always_include_dir=None):
+def organize_files_by_section(cover_page, templates, maintenance_docs, job_files,
+                              cutsheet_files=None, warranty_docs=None, pools_data=None,
+                              pool_templates=None, pool_maintenance=None,
+                              pool_gutter_care=None, equipment_list=None,
+                              cover_sheets=None, always_include_dir=None,
+                              cutsheet_pools=None):
     """
     Organize files into sections with headers.
 
@@ -1912,7 +2268,8 @@ def organize_files_by_section(cover_page, templates, maintenance_docs, job_files
         cover_page: Path to cover page
         templates: List of template file paths
         maintenance_docs: List of maintenance document paths
-        job_files: List of job folder file paths
+        job_files: List of drawing file paths (formerly all job folder files)
+        cutsheet_files: List of cut sheet file paths from the job folder
         warranty_docs: List of warranty document paths
         pools_data: Optional list of pool dicts with 'pool_id' and 'pool_name'
         pool_templates: Optional dict mapping pool_id -> list of template paths
@@ -1933,12 +2290,14 @@ def organize_files_by_section(cover_page, templates, maintenance_docs, job_files
             cover_page, cover_info=cover_sheets,
             templates=templates, maintenance_docs=maintenance_docs,
             job_files=job_files, warranty_docs=warranty_docs,
+            cutsheet_files=cutsheet_files,
             equipment_list=equipment_list,
             pools_data=pools_data,
             pool_templates=pool_templates,
             pool_maintenance=pool_maintenance,
             pool_gutter_care=pool_gutter_care,
-            always_include_dir=always_include_dir
+            always_include_dir=always_include_dir,
+            cutsheet_pool_map=cutsheet_pools
         )
 
     # Add cover page
@@ -2079,8 +2438,8 @@ def merge_pdfs(input_paths, output_path, organized=False, sections=None):
         input_paths: List of PDF paths to merge
         output_path: Path for the output PDF
         organized: If True, add section headers (requires sections parameter)
-        sections: Dictionary with keys 'cover', 'templates', 'maintenance', 'job_files', 'warranty'
-                 containing lists of files for each section
+        sections: Dictionary with keys 'cover', 'templates', 'maintenance', 'job_files',
+                 'cutsheets', 'warranty' containing lists of files for each section
     
     Returns:
         tuple (success: bool, error_message: str, skipped_files: list)
@@ -2098,6 +2457,7 @@ def merge_pdfs(input_paths, output_path, organized=False, sections=None):
             sections.get('templates', []),
             sections.get('maintenance', []),
             sections.get('job_files', []),
+            sections.get('cutsheets', []),
             sections.get('warranty', []),
             sections.get('pools_data'),
             sections.get('pool_templates'),
@@ -2105,7 +2465,8 @@ def merge_pdfs(input_paths, output_path, organized=False, sections=None):
             sections.get('pool_gutter_care'),
             sections.get('equipment_list'),
             sections.get('cover_sheets'),
-            sections.get('always_include')
+            sections.get('always_include'),
+            sections.get('cutsheet_pools')
         )
         logger.info(f"Organized files into sections with headers, total files: {len(input_paths)}")
     
