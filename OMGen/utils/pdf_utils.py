@@ -50,7 +50,7 @@ GENERIC_MAINTENANCE_KEYS = {"filter"}
 # Words that identify a specific product variant in a maintenance mapping key.
 # Keys containing these outrank generic configuration keys — e.g. "horizontal
 # stacked" beats "horizontal manual linkage" for a stacked filter description.
-VARIANT_TERMS = {"stack", "cell", "face"}
+VARIANT_TERMS = {"stack", "cell", "face", "cpre"}
 
 # Equivalent word forms collapsed before matching, so e.g. "stack
 # configuration" matches a "stacked" key, "2-Cell"/"2C" matches a
@@ -71,6 +71,15 @@ WORD_EQUIVALENTS = {
     "regenerative": "regen",
     "regeneration": "regen",
     "without": "no",
+    "rails": "rail",
+    "ladders": "ladder",
+    "grabs": "grab",
+    "handrail": "hand rail",
+    "handrails": "hand rail",
+    "maindrain": "main drain",
+    "posts": "post",
+    "steps": "step",
+    "chairs": "chair",
 }
 
 
@@ -389,6 +398,36 @@ def extract_job_number_from_sales_order(pdf_path):
     return job_number
 
 
+def extract_sales_order_number(pdf_path):
+    """
+    Extract the sales order number from a sales order PDF.
+
+    The SO number appears in the page header as ``#SO24127`` / ``SO24127``.
+    It is taken to be the most frequently occurring ``SO``-prefixed number.
+
+    Returns the SO number string (e.g. "24127") or None.
+    """
+    counts = {}
+    try:
+        doc = fitz.open(pdf_path)
+        for page in doc:
+            for m in re.finditer(r'#?\bSO\s*#?\s*(\d{4,6})\b', page.get_text(), re.IGNORECASE):
+                num = m.group(1)
+                counts[num] = counts.get(num, 0) + 1
+        doc.close()
+    except Exception as e:
+        logger.error(f"Error extracting sales order number from {pdf_path}: {e}")
+        return None
+
+    if not counts:
+        logger.warning(f"No sales order number found in: {pdf_path}")
+        return None
+
+    so_number = max(counts.items(), key=lambda kv: kv[1])[0]
+    logger.info(f"Extracted sales order number '{so_number}' (counts: {counts})")
+    return so_number
+
+
 def clean_product_line(line):
     """Clean up a product line by removing common prefixes, suffixes, and numbers."""
     # Remove common prefixes
@@ -449,6 +488,19 @@ def get_associated_documents(equipment_type, template_dir):
         # ── Gutter ─────────────────────────────────────────────────────
         "gutter": [
             "Perimeter Overflow & Recirculation System -gutter dwg.pdf",
+            "Gutter &or Integral MAINT. Manual 08-2026.pdf",
+        ],
+        "perimeter overflow": [
+            "Perimeter Overflow & Recirculation System -gutter dwg.pdf",
+            "Gutter &or Integral MAINT. Manual 08-2026.pdf",
+        ],
+        "overflow": [
+            "Perimeter Overflow & Recirculation System -gutter dwg.pdf",
+            "Gutter &or Integral MAINT. Manual 08-2026.pdf",
+        ],
+        "recirculation": [
+            "Perimeter Overflow & Recirculation System -gutter dwg.pdf",
+            "Gutter &or Integral MAINT. Manual 08-2026.pdf",
         ],
         # ── Filters (shared docs for any filter keyword) ───────────────
         "filter": [
@@ -493,22 +545,24 @@ def get_associated_documents(equipment_type, template_dir):
         ],
         # ── Regen ──────────────────────────────────────────────────────
         "regen": [
-            "PPEC REGEN Installation and Operations Manual Updated 8-26.pdf",
-            "PPEC Regen O&M Manual Rev.04-11-24(10-2023)2.pdf",
+            "PPEC Regen O&M Manual  r08-2026.pdf",
+            "Paddock Regenerative Preventative Maintenance 08-2026.pdf",
         ],
         # ── Vacsand ────────────────────────────────────────────────────
         "vacsand": [
-            "Vacuum Sand Filter Winterizing & Trouble Shooting.pdf",
+            "Vacsand Filter Winterizing & Trouble Shooting.pdf",
         ],
         "vacuum sand": [
-            "Vacuum Sand Filter Winterizing & Trouble Shooting.pdf",
+            "Vacsand Filter Winterizing & Trouble Shooting.pdf",
         ],
         "vacsand compak": [
             "Vacsand Compak Manual with Air Scour-Evacuator 2026.pdf",
+            "Vacsand Compak filter O & M Manual r08-2026.pdf",
         ],
         # ── Compak ─────────────────────────────────────────────────────
         "compak": [
             "Vacsand Compak Manual with Air Scour-Evacuator 2026.pdf",
+            "Vacsand Compak filter O & M Manual r08-2026.pdf",
         ],
         # ── High Flow variants ─────────────────────────────────────────
         "high flow 4 manual valve": [
@@ -522,23 +576,66 @@ def get_associated_documents(equipment_type, template_dir):
         ],
         # ── Bulkhead ───────────────────────────────────────────────────
         "bulkhead": [
-            "Bulkhead HDPE O_M r6-2026.pdf",
+            "Bulkhead HDPE O&M Manual r08-2026.pdf",
         ],
         # ── Main Drain ─────────────────────────────────────────────────
         "main drain": [
-            "Main Drain Paddock IAPMO R&T Manual rev 05-2024r1.pdf",
+            "Main Drain Manual Paddock IAPMO RT r 08-2026.pdf",
         ],
         # ── Evacuator ──────────────────────────────────────────────────
         "evacuator": [
             "EvacuatorSystems- Care&Maintenance.pdf",
+            "EVACBench,Wall - MAINT. Man. r08-2026.pdf",
+        ],
+        # CPRE pump-room evacuator — variant term so it beats the generic
+        # "evacuator" key when the SO says "Evacuator Pump Room CPRE".
+        "cpre": [
+            "CPRE  - Maintenance  & equipment  r08-2026.pdf",
+        ],
+        # ── Strainer ───────────────────────────────────────────────────
+        "strainer": [
+            "Pump Strainer- Maintenance for StainlessSteel & equipment  r08-2026.pdf",
         ],
         # ── Deck Drain ─────────────────────────────────────────────────
         "deck drain": [
             "Modular Deck Drain & or Deck Drain+Evacuator Care&Maintenance.pdf",
+            "Deck Drain MOD DD+E Care & Maintence -Manual r08-2026.pdf",
         ],
         # ── Grating ────────────────────────────────────────────────────
         "grating": [
-            "Grating HDPE.pdf",
+            "GRATING HDPE Maint.Manual 08-2026.pdf",
+        ],
+        # ── HDPE material care ─────────────────────────────────────────
+        "hdpe": [
+            "High Density Polyethylene HDPE care   r08-2026.pdf",
+        ],
+        # ── Ladders & rails ────────────────────────────────────────────
+        "ladder": [
+            "Ladders &Grab,Hand,Ramp Rails - Maintenance  equipment  r08-2026.pdf",
+        ],
+        "rail": [
+            "Ladders &Grab,Hand,Ramp Rails - Maintenance  equipment  r08-2026.pdf",
+        ],
+        "grab": [
+            "Ladders &Grab,Hand,Ramp Rails - Maintenance  equipment  r08-2026.pdf",
+        ],
+        # ── Lifeguard chairs / observation platforms ───────────────────
+        "lifeguard": [
+            "Lifeguard Chairs, Stations&Observation Platforms Equip  r08-2026.pdf",
+        ],
+        "observation platform": [
+            "Lifeguard Chairs, Stations&Observation Platforms Equip  r08-2026.pdf",
+        ],
+        # ── Starting platforms ─────────────────────────────────────────
+        "starting platform": [
+            "Starting Platforms - Maintenance for StainlessSteel & equipment  08-2026.pdf",
+        ],
+        # ── Powder coating ─────────────────────────────────────────────
+        "powder coat": [
+            "Powder Coating Maintenance r08-2026.pdf",
+        ],
+        "powdercoat": [
+            "Powder Coating Maintenance r08-2026.pdf",
         ],
     }
 
@@ -560,11 +657,16 @@ def get_associated_documents(equipment_type, template_dir):
         if key_words and key_words.issubset(eq_words):
             matching_keys.add(key)
 
-    # Fallback: if a key like "main drain" appears concatenated in the input
-    # (e.g. "maindrain"), still treat it as a match.
+    # Fallback: if a multi-word key like "main drain" appears concatenated in
+    # the input (e.g. "maindrain"), still treat it as a match. Single-word keys
+    # are excluded — a bare substring like "rail" would false-positive on
+    # unrelated words ("retail", "trailer"); legit concatenations such as
+    # "handrail"/"maindrain" are covered by WORD_EQUIVALENTS instead.
     if not matching_keys:
         eq_no_space = re.sub(r'[^a-z0-9]', '', eq_text)
         for key in maintenance_mappings:
+            if ' ' not in key.strip():
+                continue
             key_no_space = re.sub(r'[^a-z0-9]', '', _normalize_equipment_text(key))
             if key_no_space and key_no_space in eq_no_space:
                 matching_keys.add(key)
@@ -950,13 +1052,33 @@ def _organize_with_cover_sheets(cover_page, cover_info, templates, maintenance_d
                     organized_files.append(item)
                     logger.info(f"  Cut sheet for pool {pool_names[pid]}: {os.path.basename(item)}")
 
+    def _section_has_content(num):
+        """Whether any documents would land under this numbered section cover."""
+        if num in section_keywords:
+            kws = section_keywords[num]
+            for item in all_templates:
+                if item not in assigned_templates and _basename_matches_keywords(item, kws):
+                    return True
+            for item in all_maintenance:
+                if item not in assigned_maintenance and _basename_matches_keywords(item, kws):
+                    return True
+            return False
+        if num == 4:
+            return (any(t not in assigned_templates for t in all_templates)
+                    or any(m not in assigned_maintenance for m in all_maintenance))
+        if num == 5:
+            return bool(job_files or warranty_docs)
+        return True
+
     numbered = sorted(cover_info.get('numbered_covers', []), key=lambda x: x[0])
 
     for num, cover_path in numbered:
-        # Insert always-include docs right before the warranty/drawings section cover
+        # Insert always-include docs right before the warranty/drawings section cover.
+        # Sales Bulletin is excluded here — it's a warranty disclaimer that must
+        # come last in the manual (appended at the end of this function).
         if num == 5 and always_include_dir and os.path.isdir(always_include_dir):
             for ai in sorted(os.listdir(always_include_dir)):
-                if ai.lower().endswith('.pdf'):
+                if ai.lower().endswith('.pdf') and 'sales bulletin' not in ai.lower():
                     ai_path = os.path.join(always_include_dir, ai)
                     organized_files.append(ai_path)
                     logger.info(f"Inserted always-include doc before warranty section: {ai}")
@@ -973,6 +1095,12 @@ def _organize_with_cover_sheets(cover_page, cover_info, templates, maintenance_d
             if cutsheet_files:
                 _emit_cutsheets_grouped(cutsheet_files)
                 logger.info(f"Added {len(cutsheet_files)} cut sheets under Equipment List")
+
+        # Skip the cover entirely when nothing would be placed under it —
+        # e.g. no Filter Instruction cover on a job with no filters.
+        if not _section_has_content(num):
+            logger.info(f"Skipping empty section {num} cover: {os.path.basename(cover_path)}")
+            continue
 
         organized_files.append(cover_path)
         logger.info(f"Added numbered section cover ({num}): {os.path.basename(cover_path)}")
@@ -1024,6 +1152,13 @@ def _organize_with_cover_sheets(cover_page, cover_info, templates, maintenance_d
             organized_files.extend(warranty_docs)
             logger.info(f"Added {len(warranty_docs)} warranty docs to organized files")
 
+    # Sales Bulletin is a warranty disclaimer — always the very last document.
+    if always_include_dir and os.path.isdir(always_include_dir):
+        for ai in sorted(os.listdir(always_include_dir)):
+            if ai.lower().endswith('.pdf') and 'sales bulletin' in ai.lower():
+                organized_files.append(os.path.join(always_include_dir, ai))
+                logger.info(f"Appended sales bulletin as last document: {ai}")
+
     logger.info(f"Total organized files: {len(organized_files)}")
     return organized_files
 
@@ -1066,7 +1201,10 @@ def find_warranty_documents(keywords):
         model_cues = {"ppec", "1400s", "1200s", "2100s", "500s", "700s", "225s", "900s", "350s"}
         # If the sales order explicitly references a Vacsand/Compak vacuum sand
         # filter, do NOT infer a regenerator from shared model-number cues.
-        has_vacsand = any("vacuum" in k or "vacsand" in k or "compak" in k for k in norm_kws)
+        has_vacsand = any(
+            term in k for k in norm_kws
+            for term in ('vacsand', 'vacuumsand', 'vacuum sand', 'compak')
+        )
         has_regen_model = not has_vacsand and any(
             any(cue in k for cue in model_cues) for k in norm_kws
         )
@@ -1089,9 +1227,10 @@ def find_warranty_documents(keywords):
         if any("fiberglass" in k and "filter" in k for k in norm_kws) or \
            any("fiberglass sand" in k for k in norm_kws):
             detected_categories.add("fiberglass sand filter")
-        # "compak" is normalized lowercase; fix previous case-sensitive bug
-        if any("vacuum" in k and "filter" in k for k in norm_kws) or \
-           any("compak" in k for k in norm_kws):
+        # Vacuum sand / Vacsand warranty — requires an explicit Vacsand-family
+        # term so regen descriptions ("Vacuum Transfer System") don't pull it.
+        vacsand_terms = ('vacsand', 'vacuumsand', 'vacuum sand', 'compak')
+        if any(term in k for k in norm_kws for term in vacsand_terms):
             detected_categories.add("vacuum sand filter")
             detected_categories.add("compak")
         if any(("verticel" in k or "vertical" in k) and "filter" in k for k in norm_kws) or \
@@ -1113,6 +1252,14 @@ def find_warranty_documents(keywords):
             else:
                 detected_categories.add("gutter_std")
 
+        # --- Grating (standalone — doesn't have to be a gutter) ---
+        # "grating" substring catches concatenations like "retrofitgrating";
+        # "grate"/"grates" are checked word-level so "integrate"/"migration"
+        # don't false-trigger.
+        if any("grating" in k or {"grate", "grates"} & _match_word_set(k)
+               for k in norm_kws):
+            detected_categories.add("gutter_hdpe_grating_only")
+
         # --- Main drain: require the full phrase, not just "MD" abbreviation ---
         if any("main drain" in k or "main drain" in k.replace("_", " ") for k in norm_kws):
             detected_categories.add("main_drain")
@@ -1129,9 +1276,39 @@ def find_warranty_documents(keywords):
         if any("evacuator" in k for k in norm_kws):
             detected_categories.add("evacuator")
 
+        # --- Deck drain (covered by the same DeckDrain/EVAC warranty file) ---
+        if any("deck drain" in k or "deckdrain" in k for k in norm_kws):
+            detected_categories.add("deck_drain")
+
         # --- Bulkhead ---
-        if any("bulkhead" in k for k in norm_kws):
+        # A "Refurb Bulkhead" line is covered by the refurb warranty instead of
+        # the standard new-construction bulkhead warranty, so exclude refurb
+        # keywords here. A job with BOTH new and refurb bulkheads still pulls both.
+        if any("bulkhead" in k and "refurb" not in k for k in norm_kws):
             detected_categories.add("bulkhead")
+
+        # --- Refurb bulkhead warranty only applies to refurb jobs ---
+        if any("refurb" in k and "bulkhead" in k for k in norm_kws):
+            detected_categories.add("refurb")
+
+        # --- Balance / surge tank ---
+        if any("surge tank" in k or "balance tank" in k for k in norm_kws):
+            detected_categories.add("balance_surge_tank")
+
+        # --- Misc deck equipment ---
+        # The "Filter Access, Deck, Race, MD, Misc Equip" warranty covers
+        # rails, main drains, ladders, posts, steps, and lifeguard chairs —
+        # include it when ANY of those appear on the sales order.
+        # Word-level matching (via _match_word_set + WORD_EQUIVALENTS) so
+        # "retail"/"trailer" don't false-trigger the 'rail' check.
+        misc_equip_words = ('rail', 'ladder', 'post', 'step', 'lifeguard',
+                            'chair', 'grab')
+        for k in norm_kws:
+            kw_words = _match_word_set(k)
+            if any(t in kw_words for t in misc_equip_words) or \
+               {'main', 'drain'} <= kw_words:
+                detected_categories.add("misc_equip")
+                break
 
         # NOTE: "pump" and "valve" are intentionally omitted — there are no
         # pump/valve-specific warranty files in warranty_docs; those are covered
@@ -1149,17 +1326,24 @@ def find_warranty_documents(keywords):
             "compak":                  ["compak"],
             "verticel sand filter":    ["verticel sand filter"],
             "regenerator":             ["regenerator warranty", "regenerator"],
-            # Gutter sub-types — the actual warranty file is
-            # "GutterSTD 1yrHDPE-STD 10yrWARRANTY rev 6-2026.pdf"
+            # Gutter sub-types — "GutterSTD 1yrHDPE-STD 10yrWARRANTY ..." covers
+            # standard/HDPE gutters; "Grating HDPE Gutter Only 1 yr ..." covers
+            # HDPE grating-only gutters.
             "gutter_hdpe":             ["gutterstd"],
-            "gutter_hdpe_grating_only":["gutterstd"],
+            "gutter_hdpe_grating_only":["grating hdpe"],
             "gutter_std":              ["gutterstd"],
             # Other equipment
             "strainer":                ["ss strainer"],
-            "evacuator":               ["evac system", "evacuator"],
+            # "DeckDrain & or EVAC SS MOD System 1YR WARRANTY ..." file
+            "evacuator":               ["evac ss mod", "deckdrain", "evacuator"],
+            "deck_drain":              ["evac ss mod", "deckdrain"],
             "main_drain":              ["main drain installation warranty", "md installation"],
             "starting_platform":       ["starting platform"],
             "bulkhead":                ["bulkheadwhdpe", "pvc ibar", "bulkhead"],
+            # "Filter Access,Deck,Race,MD,Misc Equip 1YR warranty ..." file
+            "misc_equip":              ["misc equip"],
+            "refurb":                  ["refurb"],
+            "balance_surge_tank":      ["balance surge tank", "surge tank"],
         }
 
         # If nothing specific detected, be conservative: return empty to avoid bloat
@@ -1176,6 +1360,10 @@ def find_warranty_documents(keywords):
 
             # Never auto-match the registration signoff forms; we place them manually at the end
             if 'signoff' in norm_name:
+                continue
+
+            # Refurb warranties only apply when the sales order says refurb
+            if 'refurb' in norm_name and 'refurb' not in detected_categories:
                 continue
 
             include = False
@@ -1197,16 +1385,24 @@ def find_warranty_documents(keywords):
         result = sorted(set(matched_paths), key=lambda p: os.path.basename(p).lower())
 
         # 6) If an evacuator is present, include the EVAC signoff form just before
-        # the standard signoff.
+        # the standard signoff. Signoff files are found by name pattern so
+        # revision-dated renames don't break them.
+        def _find_signoff(evac):
+            for f in warranty_files:
+                n = normalize_text(os.path.splitext(f)[0])
+                if 'signoff' in n and ('evac' in n) == evac:
+                    return os.path.join(warranty_dir, f)
+            return None
+
         if "evacuator" in detected_categories:
-            evac_signoff_path = os.path.join(warranty_dir, "Warranty Regist. EVAC Signoff Form 6-2026.pdf")
-            if os.path.exists(evac_signoff_path):
+            evac_signoff_path = _find_signoff(evac=True)
+            if evac_signoff_path:
                 result.append(evac_signoff_path)
                 logger.info(f"Added EVAC warranty signoff form: {os.path.basename(evac_signoff_path)}")
 
         # 7) Append the standard warranty signoff form at the very end, always.
-        signoff_path = os.path.join(warranty_dir, "Warranty Regist. Signoff Form 6-2025.pdf")
-        if os.path.exists(signoff_path):
+        signoff_path = _find_signoff(evac=False)
+        if signoff_path:
             result.append(signoff_path)
             logger.info(f"Added standard warranty signoff form: {os.path.basename(signoff_path)}")
 
@@ -1769,6 +1965,62 @@ def fill_gutter_maintenance_doc(pdf_path, gutter_data, gutter_name=None, output_
     except Exception as e:
         logger.error(f"Error filling gutter maintenance doc {pdf_path}: {e}")
         return pdf_path
+
+
+def fill_warranty_signoff(pdf_path, job_name=None, job_number=None, output_dir=None):
+    """
+    Fill the warranty signoff form's Job Name / Job Number fields and flatten
+    the result so the values survive the merge.
+
+    Returns the filled file path, or the original path if nothing was filled.
+    """
+    field_map = {}
+    if job_name:
+        field_map['job_name'] = str(job_name)
+    if job_number:
+        field_map['job_number'] = str(job_number)
+    if not field_map:
+        return pdf_path
+
+    try:
+        doc = fitz.open(pdf_path)
+        fields_modified = 0
+        for page in doc:
+            for widget in page.widgets() or []:
+                name = (widget.field_name or '').strip().lower().replace(' ', '_')
+                if name in field_map:
+                    widget.field_value = field_map[name]
+                    widget.update()
+                    fields_modified += 1
+                    logger.info(f"Filled signoff field '{widget.field_name}' with '{field_map[name]}'")
+
+        if not fields_modified:
+            doc.close()
+            return pdf_path
+
+        save_dir = output_dir or os.path.join(os.path.dirname(pdf_path), 'filled')
+        os.makedirs(save_dir, exist_ok=True)
+        filled_path = os.path.join(save_dir, f"filled_{os.path.basename(pdf_path)}")
+        doc.save(filled_path)
+        doc.close()
+
+        # Flatten so field values become static page content
+        try:
+            flatten_doc = fitz.open(filled_path)
+            flatten_doc.bake()
+            flat_path = filled_path + ".flat"
+            flatten_doc.save(flat_path)
+            flatten_doc.close()
+            os.replace(flat_path, filled_path)
+            logger.info(f"Flattened filled signoff form: {filled_path}")
+        except Exception as e:
+            logger.warning(f"Could not flatten signoff form {filled_path}: {e}")
+
+        return filled_path
+    except Exception as e:
+        logger.error(f"Error filling warranty signoff {pdf_path}: {e}")
+        return pdf_path
+
 
 def check_template_for_gutter_fields(pdf_path):
     """

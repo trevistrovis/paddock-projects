@@ -11,10 +11,12 @@ from utils.pdf_utils import (
     extract_items_from_sales_order,
     extract_pools_from_sales_order,
     extract_job_number_from_sales_order,
+    extract_sales_order_number,
     sort_files_by_keyword_order,
     match_templates,
     merge_pdfs,
     find_warranty_documents,
+    fill_warranty_signoff,
     fill_gutter_maintenance_doc,
     parse_cover_sheets,
 )
@@ -186,6 +188,9 @@ def index():
         
         so_path = os.path.join(req_upload_dir, secure_filename(sales_order.filename))
         sales_order.save(so_path)
+
+        so_number = extract_sales_order_number(so_path)
+        logger.info(f"Sales order number: {so_number}")
 
         equipment_list_pdf = None
         if ot_file and ot_file.filename:
@@ -412,6 +417,14 @@ def index():
         warranty_docs = find_warranty_documents(item_keywords)
         logger.info(f"Matched warranty docs: {[os.path.basename(d) for d in warranty_docs]}")
 
+        # Fill Job Name / Job Number on the warranty signoff form(s)
+        warranty_docs = [
+            fill_warranty_signoff(d, job_name=job_name, job_number=so_number,
+                                  output_dir=req_output_dir)
+            if 'signoff' in os.path.basename(d).lower() else d
+            for d in warranty_docs
+        ]
+
         # Always-include documents
         def _append_unique(seq, item):
             if item and item not in seq:
@@ -446,13 +459,8 @@ def index():
             else:
                 logger.warning(f"Valve document missing (expected for filter projects): {valve_doc_path}")
 
-        # 3) Always append Sales Bulletin to end of Warranty section
-        sales_bulletin_path = os.path.join(WARRANTY_DOCS, "SALES BULLETIN 84-4-R W-LOGO revformat7-2021.pdf")
-        if os.path.exists(sales_bulletin_path):
-            _append_unique(warranty_docs, sales_bulletin_path)
-            logger.info("Appended required warranty doc: SALES BULLETIN 84-4-R W-LOGO revformat7-2021.pdf")
-        else:
-            logger.warning(f"Required warranty doc missing: {sales_bulletin_path}")
+        # 3) The Sales Bulletin lives in always_include and is appended as the
+        # very last document by _organize_with_cover_sheets — nothing needed here.
 
         # After maintenance_docs list is finalized, replace any items with their
         # filled counterparts from MAINTENANCE_DOCS/filled when present.
