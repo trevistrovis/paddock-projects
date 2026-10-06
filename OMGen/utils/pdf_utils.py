@@ -1552,6 +1552,39 @@ def match_templates(keywords, template_dir, flow_data=None, filters_data=None, t
         if docs:
             matched_maintenance.update(docs)
             logger.info(f"Added {len(docs)} maintenance docs for keyword: {keyword}")
+
+    # "Filter(s) O&M Manual" — the general filter O&M doc, added for standard
+    # filter jobs only. Vacsand/Compak and Regen/Regenerator filters have their
+    # own manuals, so this is skipped when those are the only filters present.
+    try:
+        vsr_terms = ('vacsand', 'vacuumsand', 'vacuum sand', 'compak',
+                     'regen', 'regenerator', 'regenerative', 'regeneration')
+        filter_family_terms = ('horizontal', 'horiz', 'verticel', 'vertical',
+                               'high flow', 'fiberglass', 'fiber glass',
+                               'sand filter', 'pressure filter', 'stack')
+        norm_kws = [normalize_text(k) for k in (keywords or []) if k]
+        job_has_vsr = any(t in k for k in norm_kws for t in vsr_terms)
+
+        def _is_non_vsr_filter_keyword(k):
+            if any(t in k for t in vsr_terms):
+                return False
+            if any(t in k for t in filter_family_terms):
+                return True
+            # A bare "filter" keyword counts unless the job's filters are all
+            # Vacsand/Regen — accessory lines like "filter media" shouldn't
+            # pull the general O&M manual on those jobs.
+            return 'filter' in k and not job_has_vsr
+
+        if any(_is_non_vsr_filter_keyword(k) for k in norm_kws):
+            project_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            maint_dir = os.path.join(project_dir, "maintenance_docs")
+            for f in os.listdir(maint_dir):
+                norm_name = normalize_text(os.path.splitext(f)[0])
+                if f.lower().endswith('.pdf') and 'filters o m' in norm_name:
+                    matched_maintenance.add(os.path.join(maint_dir, f))
+                    logger.info(f"Added general filter O&M doc: {f}")
+    except Exception as e:
+        logger.error(f"Error adding Filter(s) O&M doc: {e}")
     
     # Convert sets to sorted lists for consistent ordering (only when no explicit selection)
     if not template_mappings:
