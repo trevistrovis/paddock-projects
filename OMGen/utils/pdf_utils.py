@@ -503,11 +503,8 @@ def get_associated_documents(equipment_type, template_dir):
             "Gutter &or Integral MAINT. Manual 08-2026.pdf",
         ],
         # ── Filters (shared docs for any filter keyword) ───────────────
-        "filter": [
-            "Filters Notes and Tips  rev06-2026.pdf",
-            "General Trouble-Shooting - Filter.pdf",
-            "Pressure Filter Winterizing.pdf",
-        ],
+        # (The generic "filter" key previously mapped to shared notes/winterizing
+        # docs that were retired; "Filter(s) O & M Manual" is added separately.)
         # ── Horizontal variants ────────────────────────────────────────
         "horizontal manual linkage": [
             "Horizontal Manual Linkage.pdf",
@@ -549,12 +546,8 @@ def get_associated_documents(equipment_type, template_dir):
             "Paddock Regenerative Preventative Maintenance 08-2026.pdf",
         ],
         # ── Vacsand ────────────────────────────────────────────────────
-        "vacsand": [
-            "Vacsand Filter Winterizing & Trouble Shooting.pdf",
-        ],
-        "vacuum sand": [
-            "Vacsand Filter Winterizing & Trouble Shooting.pdf",
-        ],
+        # ("vacsand"/"vacuum sand" keys retired with the Winterizing & Trouble
+        # Shooting doc; the Compak manuals still cover Vacsand Compak orders.)
         "vacsand compak": [
             "Vacsand Compak Manual with Air Scour-Evacuator 2026.pdf",
             "Vacsand Compak filter O & M Manual r08-2026.pdf",
@@ -584,7 +577,6 @@ def get_associated_documents(equipment_type, template_dir):
         ],
         # ── Evacuator ──────────────────────────────────────────────────
         "evacuator": [
-            "EvacuatorSystems- Care&Maintenance.pdf",
             "EVACBench,Wall - MAINT. Man. r08-2026.pdf",
         ],
         # CPRE pump-room evacuator — variant term so it beats the generic
@@ -598,7 +590,6 @@ def get_associated_documents(equipment_type, template_dir):
         ],
         # ── Deck Drain ─────────────────────────────────────────────────
         "deck drain": [
-            "Modular Deck Drain & or Deck Drain+Evacuator Care&Maintenance.pdf",
             "Deck Drain MOD DD+E Care & Maintence -Manual r08-2026.pdf",
         ],
         # ── Grating ────────────────────────────────────────────────────
@@ -882,6 +873,16 @@ def _organize_with_cover_sheets(cover_page, cover_info, templates, maintenance_d
             organized_files.append(p)
             logger.info(f"Inserted always-include doc after front matter: {os.path.basename(p)}")
 
+    # Sales Bulletin is a warranty disclaimer — it leads the warranty docs
+    # under the section 5 cover (or the legacy warranty fallback) rather than
+    # sitting at the very end of the manual.
+    sales_bulletin_path = None
+    if always_include_dir and os.path.isdir(always_include_dir):
+        for ai in sorted(os.listdir(always_include_dir)):
+            if ai.lower().endswith('.pdf') and 'sales bulletin' in ai.lower():
+                sales_bulletin_path = os.path.join(always_include_dir, ai)
+                break
+
     pool_names = {p['pool_id']: p['pool_name'] for p in (pools_data or [])}
     multi_pool = len(pool_names) > 1
 
@@ -1067,15 +1068,15 @@ def _organize_with_cover_sheets(cover_page, cover_info, templates, maintenance_d
             return (any(t not in assigned_templates for t in all_templates)
                     or any(m not in assigned_maintenance for m in all_maintenance))
         if num == 5:
-            return bool(job_files or warranty_docs)
+            return bool(job_files or warranty_docs or sales_bulletin_path)
         return True
 
     numbered = sorted(cover_info.get('numbered_covers', []), key=lambda x: x[0])
 
     for num, cover_path in numbered:
         # Insert always-include docs right before the warranty/drawings section cover.
-        # Sales Bulletin is excluded here — it's a warranty disclaimer that must
-        # come last in the manual (appended at the end of this function).
+        # Sales Bulletin is excluded here — it's a warranty disclaimer that leads
+        # the warranty docs inside the section (emitted below).
         if num == 5 and always_include_dir and os.path.isdir(always_include_dir):
             for ai in sorted(os.listdir(always_include_dir)):
                 if ai.lower().endswith('.pdf') and 'sales bulletin' not in ai.lower():
@@ -1083,12 +1084,14 @@ def _organize_with_cover_sheets(cover_page, cover_info, templates, maintenance_d
                     organized_files.append(ai_path)
                     logger.info(f"Inserted always-include doc before warranty section: {ai}")
 
-        # Insert the optional Equipment List cover right before the
-        # Warranty & Drawings cover, and put the equipment list plus all
-        # uploaded cut sheets under it.
-        if num == 5 and cover_info.get('equipment_list_cover') and (equipment_list or cutsheet_files):
-            organized_files.append(cover_info['equipment_list_cover'])
-            logger.info(f"Added equipment list cover: {os.path.basename(cover_info['equipment_list_cover'])}")
+        # Insert the Equipment List cover (if one exists in cover_sheets) right
+        # before the Warranty & Drawings cover, and put the equipment list plus
+        # all uploaded cut sheets in the same spot — the list and cut sheets
+        # emit whether or not the cover sheet is present.
+        if num == 5 and (equipment_list or cutsheet_files):
+            if cover_info.get('equipment_list_cover'):
+                organized_files.append(cover_info['equipment_list_cover'])
+                logger.info(f"Added equipment list cover: {os.path.basename(cover_info['equipment_list_cover'])}")
             if equipment_list:
                 organized_files.append(equipment_list)
                 logger.info(f"Added equipment list: {os.path.basename(equipment_list)}")
@@ -1115,10 +1118,15 @@ def _organize_with_cover_sheets(cover_page, cover_info, templates, maintenance_d
             _emit_remaining(all_maintenance, maintenance_pool_map, assigned_maintenance, "maintenance doc")
 
         elif num == 5:
-            # Section 5: Warranty & Drawings -- drawings and warranty docs
+            # Section 5: Warranty & Drawings -- drawings and warranty docs.
+            # Sales Bulletin goes first in the warranty block, ahead of the
+            # matched warranty files.
             if job_files:
                 organized_files.extend(job_files)
                 logger.info(f"Added {len(job_files)} drawings under warranty/drawings section")
+            if sales_bulletin_path:
+                organized_files.append(sales_bulletin_path)
+                logger.info(f"Added sales bulletin at head of warranty section: {os.path.basename(sales_bulletin_path)}")
             if warranty_docs:
                 organized_files.extend(warranty_docs)
                 logger.info(f"Added {len(warranty_docs)} warranty docs under warranty/drawings section")
@@ -1129,35 +1137,33 @@ def _organize_with_cover_sheets(cover_page, cover_info, templates, maintenance_d
             if cover_info.get('equipment_list_cover'):
                 organized_files.append(cover_info['equipment_list_cover'])
                 logger.info(f"Added equipment list cover: {os.path.basename(cover_info['equipment_list_cover'])}")
-                if equipment_list:
-                    organized_files.append(equipment_list)
-                    logger.info(f"Added equipment list: {os.path.basename(equipment_list)}")
-                if cutsheet_files:
-                    _emit_cutsheets_grouped(cutsheet_files)
-                    logger.info(f"Added {len(cutsheet_files)} cut sheets under Equipment List")
-            else:
-                if equipment_list:
-                    organized_files.append(equipment_list)
-                    logger.info(f"Added equipment list: {os.path.basename(equipment_list)}")
+            if equipment_list:
+                organized_files.append(equipment_list)
+                logger.info(f"Added equipment list: {os.path.basename(equipment_list)}")
+            if cutsheet_files:
+                _emit_cutsheets_grouped(cutsheet_files)
+                logger.info(f"Added {len(cutsheet_files)} cut sheets under Equipment List")
             project_header = create_section_header("Project Documentation")
             organized_files.append(project_header)
             logger.info("Added project documentation header to organized files")
             organized_files.extend(job_files or [])
             logger.info(f"Added {len(job_files or [])} drawings to organized files")
 
-        if warranty_docs:
+        if warranty_docs or sales_bulletin_path:
             warranty_header = create_section_header("Warranty Documents")
             organized_files.append(warranty_header)
             logger.info("Added warranty header to organized files")
-            organized_files.extend(warranty_docs)
-            logger.info(f"Added {len(warranty_docs)} warranty docs to organized files")
+            if sales_bulletin_path:
+                organized_files.append(sales_bulletin_path)
+                logger.info(f"Added sales bulletin at head of warranty docs: {os.path.basename(sales_bulletin_path)}")
+            organized_files.extend(warranty_docs or [])
+            logger.info(f"Added {len(warranty_docs or [])} warranty docs to organized files")
 
-    # Sales Bulletin is a warranty disclaimer — always the very last document.
-    if always_include_dir and os.path.isdir(always_include_dir):
-        for ai in sorted(os.listdir(always_include_dir)):
-            if ai.lower().endswith('.pdf') and 'sales bulletin' in ai.lower():
-                organized_files.append(os.path.join(always_include_dir, ai))
-                logger.info(f"Appended sales bulletin as last document: {ai}")
+    # Sales Bulletin fallback: if no warranty section ran (no #5 cover and no
+    # warranty docs), still include it as the last document.
+    if sales_bulletin_path and sales_bulletin_path not in organized_files:
+        organized_files.append(sales_bulletin_path)
+        logger.info(f"Appended sales bulletin as last document: {os.path.basename(sales_bulletin_path)}")
 
     logger.info(f"Total organized files: {len(organized_files)}")
     return organized_files
@@ -1552,6 +1558,20 @@ def match_templates(keywords, template_dir, flow_data=None, filters_data=None, t
         if docs:
             matched_maintenance.update(docs)
             logger.info(f"Added {len(docs)} maintenance docs for keyword: {keyword}")
+
+    # The gutter maintenance manual already covers grating, so the standalone
+    # grating doc is only needed when grating appears without a gutter. When a
+    # gutter doc was pulled, drop the standalone grating manual.
+    has_gutter_doc = any(
+        'gutter' in normalize_text(os.path.basename(p))
+        for p in matched_maintenance
+    )
+    if has_gutter_doc:
+        for p in list(matched_maintenance):
+            norm_name = normalize_text(os.path.basename(p))
+            if 'grating' in norm_name and 'gutter' not in norm_name:
+                matched_maintenance.discard(p)
+                logger.info(f"Removed standalone grating doc (covered by gutter manual): {os.path.basename(p)}")
 
     # "Filter(s) O&M Manual" — the general filter O&M doc, added for standard
     # filter jobs only. Vacsand/Compak and Regen/Regenerator filters have their
@@ -2585,6 +2605,15 @@ def organize_files_by_section(cover_page, templates, maintenance_docs, job_files
             cutsheet_pool_map=cutsheet_pools
         )
 
+    # Sales Bulletin is a warranty disclaimer — it leads the warranty section
+    # rather than sitting with the other always-include docs before drawings.
+    sales_bulletin_path = None
+    if always_include_dir and os.path.isdir(always_include_dir):
+        for ai in sorted(os.listdir(always_include_dir)):
+            if ai.lower().endswith('.pdf') and 'sales bulletin' in ai.lower():
+                sales_bulletin_path = os.path.join(always_include_dir, ai)
+                break
+
     # Add cover page
     if cover_page:
         organized_files.append(cover_page)
@@ -2685,10 +2714,11 @@ def organize_files_by_section(cover_page, templates, maintenance_docs, job_files
         organized_files.extend(remaining_maintenance)
         logger.info(f"Added {len(remaining_maintenance)} remaining maintenance docs after templates")
 
-    # Always include docs from always_include folder before Project Documentation
+    # Always include docs from always_include folder before Project Documentation.
+    # Sales Bulletin is excluded here — it leads the warranty section below.
     if always_include_dir and os.path.isdir(always_include_dir):
         for ai in sorted(os.listdir(always_include_dir)):
-            if ai.lower().endswith('.pdf'):
+            if ai.lower().endswith('.pdf') and 'sales bulletin' not in ai.lower():
                 ai_path = os.path.join(always_include_dir, ai)
                 organized_files.append(ai_path)
                 logger.info(f"Inserted always-include doc before project docs: {ai}")
@@ -2704,13 +2734,16 @@ def organize_files_by_section(cover_page, templates, maintenance_docs, job_files
         organized_files.extend(job_files)
         logger.info(f"Added {len(job_files)} job files to organized files")
     
-    # Add Warranty Documents section LAST
-    if warranty_docs:
+    # Add Warranty Documents section LAST — Sales Bulletin leads it.
+    if warranty_docs or sales_bulletin_path:
         warranty_header = create_section_header("Warranty Documents")
         organized_files.append(warranty_header)
         logger.info("Added warranty header to organized files")
-        organized_files.extend(warranty_docs)
-        logger.info(f"Added {len(warranty_docs)} warranty docs to organized files")
+        if sales_bulletin_path:
+            organized_files.append(sales_bulletin_path)
+            logger.info(f"Added sales bulletin at head of warranty docs: {os.path.basename(sales_bulletin_path)}")
+        organized_files.extend(warranty_docs or [])
+        logger.info(f"Added {len(warranty_docs or [])} warranty docs to organized files")
     
     logger.info(f"Total organized files: {len(organized_files)}")
     return organized_files

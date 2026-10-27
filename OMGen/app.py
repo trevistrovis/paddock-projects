@@ -459,8 +459,8 @@ def index():
             else:
                 logger.warning(f"Valve document missing (expected for filter projects): {valve_doc_path}")
 
-        # 3) The Sales Bulletin lives in always_include and is appended as the
-        # very last document by _organize_with_cover_sheets — nothing needed here.
+        # 3) The Sales Bulletin lives in always_include and is emitted as the
+        # first warranty doc by _organize_with_cover_sheets — nothing needed here.
 
         # After maintenance_docs list is finalized, replace any items with their
         # filled counterparts from MAINTENANCE_DOCS/filled when present.
